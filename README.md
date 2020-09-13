@@ -1,6 +1,6 @@
-![Clippy/Fmt](https://github.com/xnuter/http-proxy/workflows/Clippy/Fmt/badge.svg)
+![Clippy/Fmt](https://github.com/xnuter/http-tunnel/workflows/Clippy/Fmt/badge.svg)
 ![Tests](https://github.com/xnuter/http-proxy/workflows/Tests/badge.svg)
-[![Coverage Status](https://coveralls.io/repos/github/xnuter/http-proxy/badge.svg?branch=master&_=1)](https://coveralls.io/github/xnuter/http-proxy?branch=master&_=1)
+[![Coverage Status](https://coveralls.io/repos/github/xnuter/http-tunnel/badge.svg?branch=initial-commit)](https://coveralls.io/github/xnuter/http-tunnel?branch=initial-commit)
 
 ### Overview
 

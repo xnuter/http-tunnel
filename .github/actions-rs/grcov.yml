@@ -2,10 +2,12 @@ output-type: lcov
 output-path: ./lcov.info
 source-dir: ./src
 ignore-dir:
-  - "../"
+  - ".cargo/"
 ignore:
-  - "*tokio*"
-  - "*rand*"
+  - "../*"
+  - "configuration.rs"
+  - "main.rs"
+  - "upstream.rs"
 ignore-not-existing: true
 llvm: true
 excl-start: (.*)begin-ignore-line(.*)

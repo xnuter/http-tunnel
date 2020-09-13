@@ -1,5 +1,5 @@
 ![Clippy/Fmt](https://github.com/xnuter/http-tunnel/workflows/Clippy/Fmt/badge.svg)
-![Tests](https://github.com/xnuter/http-proxy/workflows/Tests/badge.svg)
+![Tests](https://github.com/xnuter/http-tunnel/workflows/Tests/badge.svg)
 [![Coverage Status](https://coveralls.io/repos/github/xnuter/http-tunnel/badge.svg?branch=initial-commit)](https://coveralls.io/github/xnuter/http-tunnel?branch=initial-commit)
 
 ### Overview

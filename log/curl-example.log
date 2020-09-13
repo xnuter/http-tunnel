@@ -1,0 +1,95 @@
+*   Trying 127.0.0.1...
+* TCP_NODELAY set
+* Connected to simple.rust-http-tunnel.org (127.0.0.1) port 8443 (#0)
+* ALPN, offering http/1.1
+* successfully set certificate verify locations:
+*   CAfile: ./config/domain.crt
+  CApath: none
+* TLSv1.2 (OUT), TLS handshake, Client hello (1):
+* TLSv1.2 (IN), TLS handshake, Server hello (2):
+* TLSv1.2 (IN), TLS handshake, Certificate (11):
+* TLSv1.2 (IN), TLS handshake, Server key exchange (12):
+* TLSv1.2 (IN), TLS handshake, Server finished (14):
+* TLSv1.2 (OUT), TLS handshake, Client key exchange (16):
+* TLSv1.2 (OUT), TLS change cipher, Change cipher spec (1):
+* TLSv1.2 (OUT), TLS handshake, Finished (20):
+* TLSv1.2 (IN), TLS change cipher, Change cipher spec (1):
+* TLSv1.2 (IN), TLS handshake, Finished (20):
+* SSL connection using TLSv1.2 / ECDHE-RSA-AES256-GCM-SHA384
+* ALPN, server did not agree to a protocol
+* Proxy certificate:
+*  subject: C=US; ST=Washington; L=Bellevue; O=xnuter; OU=Eugene Retunsky; CN=simple.rust-http-tunnel.org; emailAddress=retunsky@gmail.com
+*  start date: Sep 13 00:06:26 2020 GMT
+*  expire date: Sep 11 00:06:26 2030 GMT
+*  common name: simple.rust-http-tunnel.org (matched)
+*  issuer: C=US; ST=Washington; L=Bellevue; O=xnuter; OU=Eugene Retunsky; CN=simple.rust-http-tunnel.org; emailAddress=retunsky@gmail.com
+*  SSL certificate verify ok.
+* allocate connect buffer!
+* Establish HTTP proxy tunnel to www.wikipedia.org:443
+> CONNECT www.wikipedia.org:443 HTTP/1.1
+> Host: www.wikipedia.org:443
+> User-Agent: curl/7.64.1
+> Proxy-Connection: Keep-Alive
+> 
+< HTTP/1.1 200 OK
+< 
+* Proxy replied 200 to CONNECT request
+* CONNECT phase completed!
+* ALPN, offering h2
+* ALPN, offering http/1.1
+* successfully set certificate verify locations:
+*   CAfile: /etc/ssl/cert.pem
+  CApath: none
+* TLSv1.2 (OUT), TLS handshake, Client hello (1):
+* CONNECT phase completed!
+* CONNECT phase completed!
+* TLSv1.2 (IN), TLS handshake, Server hello (2):
+* TLSv1.2 (IN), TLS handshake, Certificate (11):
+* TLSv1.2 (IN), TLS handshake, Server key exchange (12):
+* TLSv1.2 (IN), TLS handshake, Server finished (14):
+* TLSv1.2 (OUT), TLS handshake, Client key exchange (16):
+* TLSv1.2 (OUT), TLS change cipher, Change cipher spec (1):
+* TLSv1.2 (OUT), TLS handshake, Finished (20):
+* TLSv1.2 (IN), TLS change cipher, Change cipher spec (1):
+* TLSv1.2 (IN), TLS handshake, Finished (20):
+* SSL connection using TLSv1.2 / ECDHE-ECDSA-AES256-GCM-SHA384
+* ALPN, server accepted to use h2
+* Server certificate:
+*  subject: CN=*.wikipedia.org
+*  start date: Jul 20 09:02:07 2020 GMT
+*  expire date: Oct 18 09:02:07 2020 GMT
+*  subjectAltName: host "www.wikipedia.org" matched cert's "*.wikipedia.org"
+*  issuer: C=US; O=Let's Encrypt; CN=Let's Encrypt Authority X3
+*  SSL certificate verify ok.
+* Using HTTP2, server supports multi-use
+* Connection state changed (HTTP/2 confirmed)
+* Copying HTTP/2 data in stream buffer to connection buffer after upgrade: len=0
+* Using Stream ID: 1 (easy handle 0x7fc79800d600)
+> GET / HTTP/2
+> Host: www.wikipedia.org
+> User-Agent: curl/7.64.1
+> Accept: */*
+> 
+* Connection state changed (MAX_CONCURRENT_STREAMS == 100)!
+< HTTP/2 200 
+< date: Sat, 12 Sep 2020 22:59:54 GMT
+< cache-control: s-maxage=86400, must-revalidate, max-age=3600
+< server: ATS/8.0.8
+< etag: W/"10d71-5ad9d435972e3"
+< last-modified: Mon, 24 Aug 2020 10:43:54 GMT
+< content-type: text/html
+< vary: Accept-Encoding
+< age: 4191
+< x-cache: cp4029 hit, cp4030 hit/15247
+< x-cache-status: hit-front
+< server-timing: cache;desc="hit-front"
+< strict-transport-security: max-age=106384710; includeSubDomains; preload
+< set-cookie: WMF-Last-Access=13-Sep-2020;Path=/;HttpOnly;secure;Expires=Thu, 15 Oct 2020 00:00:00 GMT
+< set-cookie: WMF-Last-Access-Global=13-Sep-2020;Path=/;Domain=.wikipedia.org;HttpOnly;secure;Expires=Thu, 15 Oct 2020 00:00:00 GMT
+< x-client-ip: 24.16.152.151
+< set-cookie: GeoIP=US:WA:Bellevue:47.61:-122.21:v4; Path=/; secure; Domain=.wikipedia.org
+< accept-ranges: bytes
+< content-length: 68977
+< 
+* Connection #0 to host simple.rust-http-tunnel.org left intact
+* Closing connection 0

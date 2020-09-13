@@ -1,0 +1,49 @@
+refresh_rate: 30 seconds
+
+appenders:
+  stdout:
+    kind: console
+
+  metrics:
+    kind: rolling_file
+    path: log/metrics.log
+    policy:
+      kind: compound
+      roller:
+        kind: fixed_window
+        count: 10
+        base: 1
+        pattern: log/metrics.{}.log
+      trigger:
+        kind: size
+        limit: 10mb
+    encoder:
+      pattern: "{d} - {m}{n}"
+
+  application:
+    kind: rolling_file
+    path: log/application.log
+    policy:
+      kind: compound
+      roller:
+        kind: fixed_window
+        count: 10
+        base: 1
+        pattern: log/application.{}.log
+      trigger:
+        kind: size
+        limit: 10mb
+    encoder:
+      pattern: "{d} - [{l}] {f}:{L} - {m}{n}"
+
+root:
+  level: info
+  appenders:
+    - application
+
+loggers:
+  metrics:
+    level: info
+    appenders:
+      - metrics
+    additive: false

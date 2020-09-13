@@ -436,8 +436,7 @@ mod test {
             .write(handshake_response)
             .build();
 
-        let upstream: Mock = Builder::new()
-            .build();
+        let upstream: Mock = Builder::new().build();
 
         let ctx = TunnelCtxBuilder::default()
             .id(thread_rng().gen::<u128>())

@@ -197,6 +197,7 @@ impl RelayPolicy {
     }
 }
 
+// cov:begin-ignore-line
 impl fmt::Display for RelayStats {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(
@@ -210,6 +211,7 @@ impl fmt::Display for RelayStats {
         )
     }
 }
+// cov:end-ignore-line
 
 #[cfg(test)]
 mod test_relay_policy {

@@ -110,11 +110,13 @@ impl TunnelDestination for HttpTunnelDestination {
     }
 }
 
+// cov:begin-ignore-line
 impl fmt::Display for HttpTunnelDestination {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.target)
     }
 }
+// cov:end-ignore-line
 
 fn got_http_request(buffer: &BytesMut) -> bool {
     buffer.len() >= MAX_HTTP_REQUEST_SIZE || buffer.ends_with(REQUEST_END_MARKER)

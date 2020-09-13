@@ -292,11 +292,13 @@ where
     }
 }
 
+// cov:begin-ignore-line
 impl fmt::Display for TunnelCtx {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.id)
     }
 }
+// cov:end-ignore-line
 
 #[cfg(test)]
 mod test {
@@ -405,6 +407,52 @@ mod test {
         let connector = MockUpstreamConnector {
             destination: "foo.bar:80".to_string(),
             mock: None,
+            delay: None,
+            error: None,
+        };
+
+        let default_timeout = Duration::from_secs(1);
+        let config = build_config(default_timeout);
+
+        let result = ConnectionTunnel::new(codec, connector, downstream, config, ctx)
+            .start()
+            .await;
+
+        assert!(result.is_ok());
+        let stats = result.unwrap();
+        assert_eq!(stats.result, EstablishTunnelResult::RequestTimeout);
+        assert!(stats.upstream_stats.is_none());
+        assert!(stats.downstream_stats.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_tunnel_response_timeout() {
+        let handshake_request = b"CONNECT foo.bar:80 HTTP/1.1\r\n\r\n";
+        let handshake_response = b"HTTP/1.1 408 TIMEOUT\r\n\r\n";
+
+        let downstream: Mock = Builder::new()
+            .read(handshake_request)
+            .wait(Duration::from_secs(2))
+            .write(handshake_response)
+            .build();
+
+        let upstream: Mock = Builder::new()
+            .build();
+
+        let ctx = TunnelCtxBuilder::default()
+            .id(thread_rng().gen::<u128>())
+            .build()
+            .expect("TunnelCtxBuilder failed");
+
+        let codec: HttpTunnelCodec = HttpTunnelCodecBuilder::default()
+            .tunnel_ctx(ctx)
+            .enabled_destinations(Regex::new(r"foo\.bar:80").unwrap())
+            .build()
+            .expect("ConnectRequestCodecBuilder failed");
+
+        let connector = MockUpstreamConnector {
+            destination: "foo.bar:80".to_string(),
+            mock: Some(upstream),
             delay: None,
             error: None,
         };
@@ -551,6 +599,50 @@ mod test {
         assert!(result.is_ok());
         let stats = result.unwrap();
         assert_eq!(stats.result, EstablishTunnelResult::BadGateway);
+        assert!(stats.upstream_stats.is_none());
+        assert!(stats.downstream_stats.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_tunnel_bad_request() {
+        let handshake_request = b"CONNECT\tfoo.bar:80\tHTTP/1.1\r\n\r\n";
+        let handshake_response = b"HTTP/1.1 400 BAD_REQUEST\r\n\r\n";
+
+        let downstream: Mock = Builder::new()
+            .read(handshake_request)
+            .write(handshake_response)
+            .build();
+
+        let _upstream: Mock = Builder::new().build();
+
+        let ctx = TunnelCtxBuilder::default()
+            .id(thread_rng().gen::<u128>())
+            .build()
+            .expect("TunnelCtxBuilder failed");
+
+        let codec: HttpTunnelCodec = HttpTunnelCodecBuilder::default()
+            .tunnel_ctx(ctx)
+            .enabled_destinations(Regex::new(r"foo\.bar:80").unwrap())
+            .build()
+            .expect("ConnectRequestCodecBuilder failed");
+
+        let connector = MockUpstreamConnector {
+            destination: "foo.bar:80".to_string(),
+            mock: None,
+            delay: None,
+            error: Some(ErrorKind::BrokenPipe),
+        };
+
+        let default_timeout = Duration::from_secs(1);
+        let config = build_config(default_timeout);
+
+        let result = ConnectionTunnel::new(codec, connector, downstream, config, ctx)
+            .start()
+            .await;
+
+        assert!(result.is_ok());
+        let stats = result.unwrap();
+        assert_eq!(stats.result, EstablishTunnelResult::BadRequest);
         assert!(stats.upstream_stats.is_none());
         assert!(stats.downstream_stats.is_none());
     }

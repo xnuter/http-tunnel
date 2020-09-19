@@ -1,0 +1,19 @@
+# a configuration to test it with your browser
+# set `localhost:8080` as HTTP/HTTPS proxy (run it in HTTP mode)
+
+client_connection:
+  initiation_timeout: 100s
+  relay_policy:
+    idle_timeout: 300s
+    min_rate_bpm: 0
+    max_rate_bps: 10000000
+
+target_connection:
+  dns_cache_ttl: 60s
+  allowed_targets: ".*" # anything
+  connect_timeout: 100s
+  relay_policy:
+    idle_timeout: 100s
+    min_rate_bpm: 0
+    max_rate_bps: 10000000
+

@@ -1,0 +1,24 @@
+client_connection:
+  initiation_timeout: 10s
+  # we want to make sure connections are not under-utilized or over-utilized
+  relay_policy:
+    idle_timeout: 30s
+    min_rate_bpm: 1000
+    max_rate_bps: 10000
+
+target_connection:
+  dns_cache_ttl: 60s
+  allowed_targets: "^(?i)([a-z]+)\\.(wikipedia|rust-lang)\\.org:443$"
+  connect_timeout: 10s
+  relay_policy:
+    idle_timeout: 10s
+    min_rate_bpm: 1000
+    max_rate_bps: 10000
+    # Other traffic policies may go here
+    # max_lifetime: 100s
+    # max_total_payload: 10mb
+
+  # we can extend this with TCP policies, if necessary. E.g.
+  # tcp_policies:
+  #   keep_idle: 60s
+  #   linger, nodelay, ....

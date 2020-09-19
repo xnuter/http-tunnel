@@ -1,0 +1,15 @@
+output-type: lcov
+output-path: ./lcov.info
+source-dir: ./src
+ignore-dir:
+  - "*.cargo/*"
+ignore:
+  - "*.cargo*"
+  - "*rust*"
+  - "*configuration.rs"
+  - "*main.rs"
+  - "*proxy_target.rs"
+ignore-not-existing: true
+llvm: true
+excl-start: (.*)begin-ignore-line(.*)
+excl-stop: (.*)end-ignore-line(.*)

@@ -1,0 +1,16 @@
+@startuml
+Client <--> Tunnel: L4 handshake
+Client -> Tunnel: Negotiate Target
+activate Tunnel
+Tunnel <-> Target: L4 Handshake
+activate Target
+Tunnel -> Client: Success
+group Full-Duplex, endless loop
+Client --> Tunnel: upstream
+Tunnel --> Target: upstream
+Tunnel <-- Target: downstream
+Client <-- Tunnel: downstream
+end
+deactivate Tunnel
+deactivate Target
+@enduml

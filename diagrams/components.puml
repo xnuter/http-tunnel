@@ -1,0 +1,19 @@
+@startuml
+Client <--> Tunnel: TCP handshake
+group HTTPS Tunnel only
+Client <--> Tunnel: TLS handshake
+end
+Client -> Tunnel: HTTP CONNECT (target)
+activate Tunnel
+Tunnel <-> Target: TCP Handshake
+activate Target
+Tunnel -> Client: 200 OK
+group Full-Duplex, endless loop
+Client --> Tunnel: upstream
+Tunnel --> Target: upstream
+Tunnel <-- Target: downstream
+Client <-- Tunnel: downstream
+end
+deactivate Tunnel
+deactivate Target
+@enduml

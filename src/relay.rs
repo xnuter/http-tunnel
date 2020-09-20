@@ -140,6 +140,20 @@ impl Relay {
                 .relay_policy
                 .check_transmission_rates(&start_time, total_bytes)
             {
+                match dest.shutdown().await {
+                    Ok(_) => {
+                        info!(
+                            "{}: shutdown due do {:?}, CTX={}",
+                            self.name, rate_violation, self.tunnel_ctx
+                        );
+                    }
+                    Err(e) => {
+                        error!(
+                            "{} failed to shutdown. Err = {:?}, CTX={}",
+                            self.name, e, self.tunnel_ctx
+                        );
+                    }
+                }
                 shutdown_reason = rate_violation;
                 break;
             }

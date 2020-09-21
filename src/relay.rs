@@ -10,7 +10,7 @@ use std::future::Future;
 use std::time::{Duration, Instant};
 
 use crate::tunnel::TunnelCtx;
-use log::{error, info};
+use log::{debug, error, info};
 use serde::export::Formatter;
 use tokio::io;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
@@ -140,24 +140,12 @@ impl Relay {
                 .relay_policy
                 .check_transmission_rates(&start_time, total_bytes)
             {
-                match dest.shutdown().await {
-                    Ok(_) => {
-                        info!(
-                            "{}: shutdown due do {:?}, CTX={}",
-                            self.name, rate_violation, self.tunnel_ctx
-                        );
-                    }
-                    Err(e) => {
-                        error!(
-                            "{} failed to shutdown. Err = {:?}, CTX={}",
-                            self.name, e, self.tunnel_ctx
-                        );
-                    }
-                }
                 shutdown_reason = rate_violation;
                 break;
             }
         }
+
+        self.shutdown(&mut dest, &shutdown_reason).await;
 
         let duration = Instant::now().duration_since(start_time);
 
@@ -172,6 +160,27 @@ impl Relay {
         info!("{} closed: {}, CTX={}", self.name, stats, self.tunnel_ctx);
 
         Ok(stats)
+    }
+
+    async fn shutdown<W: AsyncWriteExt + Sized>(
+        &self,
+        dest: &mut WriteHalf<W>,
+        reason: &RelayShutdownReasons,
+    ) {
+        match dest.shutdown().await {
+            Ok(_) => {
+                debug!(
+                    "{} shutdown due do {:?}, CTX={}",
+                    self.name, reason, self.tunnel_ctx
+                );
+            }
+            Err(e) => {
+                error!(
+                    "{} failed to shutdown. Err = {:?}, CTX={}",
+                    self.name, e, self.tunnel_ctx
+                );
+            }
+        }
     }
 }
 

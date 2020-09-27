@@ -93,3 +93,25 @@ Only general information (events, errors, data sizes) is logged for monitoring p
 * Sending requests resulting in large responses
 
 Some of them can be solved by introducing rate/age limits and inactivity timeouts.
+
+### Build
+
+Install `cargo` - [follow these instructions](https://doc.rust-lang.org/cargo/getting-started/installation.html)
+
+On `Debian` to fix [OpenSSL build issue](https://docs.rs/openssl/0.10.30/openssl/):
+
+```
+sudo apt-get install pkg-config libssl-dev
+```
+
+### Installation
+
+E.g. on Debian based Linux:
+
+```
+$ curl https://sh.rustup.rs -sSf | sh
+$ sudo apt-get install gcc
+$ sudo apt-get install pkg-config libssl-dev
+$ cargo install http-tunnel
+$ http-tunnel --config ./config/config-browser.yaml --bind 0.0.0.0:8080 http
+```

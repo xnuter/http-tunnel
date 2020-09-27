@@ -14,7 +14,7 @@ extern crate strum;
 #[macro_use]
 extern crate strum_macros;
 
-use log::{error, info};
+use log::{error, info, LevelFilter};
 use rand::{thread_rng, Rng};
 use tokio::io;
 use tokio::net::{TcpListener, TcpStream};
@@ -25,6 +25,9 @@ use crate::configuration::{ProxyConfiguration, ProxyMode};
 use crate::http_tunnel_codec::{HttpTunnelCodec, HttpTunnelCodecBuilder, HttpTunnelTarget};
 use crate::proxy_target::{SimpleCachingDnsResolver, SimpleTcpConnector};
 use crate::tunnel::{ConnectionTunnel, TunnelCtx, TunnelCtxBuilder, TunnelStats};
+use log4rs::append::console::ConsoleAppender;
+use log4rs::config::{Appender, Logger, Root};
+use log4rs::Config;
 use std::io::{Error, ErrorKind};
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -236,9 +239,30 @@ fn report_tunnel_metrics(ctx: TunnelCtx, stats: io::Result<TunnelStats>) {
 fn init_logger() {
     let logger_configuration = "./config/log4rs.yaml";
     if let Err(e) = log4rs::init_file(logger_configuration, Default::default()) {
-        panic!(
-            "Cannot initialize logger from {}. Aborting execution: {}",
+        println!(
+            "Cannot initialize logger from {}, error=[{}]. Logging to the console.",
             logger_configuration, e
-        )
+        );
+        let config = Config::builder()
+            .appender(
+                Appender::builder()
+                    .build("application", Box::new(ConsoleAppender::builder().build())),
+            )
+            .appender(
+                Appender::builder().build("metrics", Box::new(ConsoleAppender::builder().build())),
+            )
+            .logger(
+                Logger::builder()
+                    .appender("metrics")
+                    .additive(false)
+                    .build("metrics", LevelFilter::Info),
+            )
+            .build(
+                Root::builder()
+                    .appender("application")
+                    .build(LevelFilter::Info),
+            )
+            .unwrap();
+        log4rs::init_config(config).expect("Bug: bad default config");
     }
 }

@@ -52,6 +52,34 @@ pub struct ProxyConfiguration {
     pub tunnel_config: TunnelConfig,
 }
 
+impl Default for TunnelConfig {
+    fn default() -> Self {
+        // by default no restrictions
+        let no_limit = 1_000_000_000_000_u64;
+        let default_timeout = Duration::from_secs(300);
+        Self {
+            client_connection: ClientConnectionConfig {
+                initiation_timeout: default_timeout,
+                relay_policy: RelayPolicy {
+                    idle_timeout: default_timeout,
+                    min_rate_bpm: 0,
+                    max_rate_bps: no_limit,
+                },
+            },
+            target_connection: TargetConnectionConfig {
+                dns_cache_ttl: Default::default(),
+                allowed_targets: Regex::new(".*").expect("Bug: bad default regexp"),
+                connect_timeout: Default::default(),
+                relay_policy: RelayPolicy {
+                    idle_timeout: default_timeout,
+                    min_rate_bpm: 0,
+                    max_rate_bps: no_limit,
+                },
+            },
+        }
+    }
+}
+
 impl ProxyConfiguration {
     /// For this demo the app reads the key/certs from the disk.
     /// In production more secure approaches should be used (at least encryption with regularly
@@ -62,7 +90,7 @@ impl ProxyConfiguration {
             (version: "0.1.0")
             (author: "Eugene Retunsky")
             (about: "A simple HTTP(S) tunnel")
-            (@arg CONFIG: --config +required +takes_value "Configuration file")
+            (@arg CONFIG: --config +takes_value "Configuration file")
             (@arg BIND: --bind +required +takes_value "Bind address, e.g. 0.0.0.0:8443")
             (@subcommand http =>
                 (about: "Run the tunnel in HTTP mode")
@@ -77,9 +105,8 @@ impl ProxyConfiguration {
         )
         .get_matches();
 
-        let config = matches
-            .value_of("CONFIG")
-            .expect("misconfiguration for config");
+        let config = matches.value_of("CONFIG");
+
         let bind_address = matches
             .value_of("BIND")
             .expect("misconfiguration for bind")
@@ -87,7 +114,7 @@ impl ProxyConfiguration {
 
         let mode = if matches.subcommand_matches("http").is_some() {
             info!(
-                "Starting in HTTP mode: bind: {}, configuration: {}",
+                "Starting in HTTP mode: bind: {}, configuration: {:?}",
                 bind_address, config
             );
             ProxyMode::HTTP
@@ -101,7 +128,7 @@ impl ProxyConfiguration {
 
             let identity = ProxyConfiguration::tls_identity_from_file(pkcs12_file, password)?;
             info!(
-                "Starting in HTTPS mode: pkcs12: {}, password: {}, bind: {}, configuration: {}",
+                "Starting in HTTPS mode: pkcs12: {}, password: {}, bind: {}, configuration: {:?}",
                 pkcs12_file,
                 !password.is_empty(),
                 bind_address,
@@ -112,7 +139,10 @@ impl ProxyConfiguration {
             unreachable!("Only http and https commands are supported");
         };
 
-        let tunnel_config = ProxyConfiguration::read_tunnel_config(config)?;
+        let tunnel_config = match config {
+            None => TunnelConfig::default(),
+            Some(config) => ProxyConfiguration::read_tunnel_config(config)?,
+        };
 
         Ok(ProxyConfigurationBuilder::default()
             .bind_address(bind_address)

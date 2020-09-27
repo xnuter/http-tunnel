@@ -106,12 +106,20 @@ sudo apt-get install pkg-config libssl-dev
 
 ### Installation
 
-E.g. on Debian based Linux:
+On MacOS:
+
+```
+$ curl https://sh.rustup.rs -sSf | sh
+$ cargo install http-tunnel
+$ http-tunnel --bind 0.0.0.0:8080 http
+```
+
+On Debian based Linux:
 
 ```
 $ curl https://sh.rustup.rs -sSf | sh
 $ sudo apt-get install gcc
 $ sudo apt-get install pkg-config libssl-dev
 $ cargo install http-tunnel
-$ http-tunnel --config ./config/config-browser.yaml --bind 0.0.0.0:8080 http
+$ http-tunnel --bind 0.0.0.0:8080 http
 ```

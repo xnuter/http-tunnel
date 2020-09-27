@@ -118,8 +118,7 @@ On Debian based Linux:
 
 ```
 curl https://sh.rustup.rs -sSf | sh
-sudo apt-get install gcc
-sudo apt-get install pkg-config libssl-dev
+sudo apt-get -y install gcc pkg-config libssl-dev
 cargo install http-tunnel
 http-tunnel --bind 0.0.0.0:8080 http
 ```

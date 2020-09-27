@@ -67,9 +67,9 @@ impl Default for TunnelConfig {
                 },
             },
             target_connection: TargetConnectionConfig {
-                dns_cache_ttl: Default::default(),
+                dns_cache_ttl: default_timeout,
                 allowed_targets: Regex::new(".*").expect("Bug: bad default regexp"),
-                connect_timeout: Default::default(),
+                connect_timeout: default_timeout,
                 relay_policy: RelayPolicy {
                     idle_timeout: default_timeout,
                     min_rate_bpm: 0,

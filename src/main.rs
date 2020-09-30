@@ -26,7 +26,7 @@ use crate::http_tunnel_codec::{HttpTunnelCodec, HttpTunnelCodecBuilder, HttpTunn
 use crate::proxy_target::{SimpleCachingDnsResolver, SimpleTcpConnector};
 use crate::tunnel::{ConnectionTunnel, TunnelCtx, TunnelCtxBuilder, TunnelStats};
 use log4rs::append::console::ConsoleAppender;
-use log4rs::config::{Appender, Logger, Root};
+use log4rs::config::{Appender, Root};
 use log4rs::Config;
 use std::io::{Error, ErrorKind};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -247,15 +247,6 @@ fn init_logger() {
             .appender(
                 Appender::builder()
                     .build("application", Box::new(ConsoleAppender::builder().build())),
-            )
-            .appender(
-                Appender::builder().build("metrics", Box::new(ConsoleAppender::builder().build())),
-            )
-            .logger(
-                Logger::builder()
-                    .appender("metrics")
-                    .additive(false)
-                    .build("metrics", LevelFilter::Info),
             )
             .build(
                 Root::builder()

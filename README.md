@@ -10,7 +10,7 @@ An implementation of [HTTP Tunnel](https://en.wikipedia.org/wiki/HTTP_tunnel) in
 The core code is entirely abstract from the tunnel protocol or transport protocols.
 In this example, it supports both `HTTP` and `HTTPS` with minimal additional code. 
 
-It can run over `QUIC+HTTP/3` or connect via another tunnel (as long as `AsyncRead + AsyncWrite` is satisfied for the implementation).
+E.g. it can be extended to run the tunnel over `QUIC+HTTP/3` or connect to another tunnel (as long as `AsyncRead + AsyncWrite` is satisfied for the implementation).
 
 [Read more](https://medium.com/@xnuter/writing-a-modern-http-s-tunnel-in-rust-56e70d898700) about the design.
 
@@ -33,22 +33,30 @@ It can run over `QUIC+HTTP/3` or connect via another tunnel (as long as `AsyncRe
           
 ### Run demo
 
+Install via `cargo`:
+
+```
+cargo install http-tunnel
+```
+
+Now you can start it without any configuration:
+
+```
+$ http-tunnel --bind 0.0.0.0:8080 http
+```
+
 There are two modes.
 
 * `HTTPS`:
 ```
-$ cargo fmt && cargo clippy && cargo test
-$ cargo build --release
-$ ./target/release/http-tunnel --config ./config/config.yaml \
-                               --bind 0.0.0.0:8443 \
-                               https --pk "./config/domain.pfx" --password "6B9mZ*1hJ#xk"
+$ http-tunnel --config ./config/config.yaml \
+              --bind 0.0.0.0:8443 \
+              https --pk "./config/domain.pfx" --password "6B9mZ*1hJ#xk"
 ```
 
 * `HTTP`:
 ```
-$ cargo fmt && cargo clippy && cargo test 
-$ cargo build --release
-$ ./target/release/http-tunnel --config ./config/config-browser.yaml --bind 0.0.0.0:8080 http
+$ http-tunnel --config ./config/config-browser.yaml --bind 0.0.0.0:8080 http
 ```
 
 ### Testing with a browser (HTTP)

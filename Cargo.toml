@@ -1,13 +1,13 @@
 [package]
 name = "http-tunnel"
-version = "0.1.4"
+version = "0.1.5"
 authors = ["Eugene Retunsky"]
 license = "MIT OR Apache-2.0"
 edition = "2018"
 publish = true
 readme = "README.md"
-repository = "https://github.com/xnuter/http-proxy"
-homepage = "https://github.com/xnuter/http-proxy"
+repository = "https://github.com/xnuter/http-tunnel"
+homepage = "https://github.com/xnuter/http-tunnel"
 description = """
 HTTP Tunnel example written in Rust.
 """

@@ -12,7 +12,6 @@ use rand::prelude::thread_rng;
 use rand::Rng;
 use serde::export::PhantomData;
 use std::collections::HashMap;
-use std::iter::FromIterator;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
@@ -159,7 +158,7 @@ impl SimpleCachingDnsResolver {
 
     async fn resolve(target: &str) -> io::Result<Vec<SocketAddr>> {
         debug!("Resolving DNS {}", target,);
-        let resolved = Vec::from_iter(tokio::net::lookup_host(target).await?);
+        let resolved: Vec<SocketAddr> = tokio::net::lookup_host(target).await?.collect();
         info!("Resolved DNS {} to {:?}", target, resolved);
 
         if resolved.is_empty() {

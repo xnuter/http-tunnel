@@ -371,12 +371,10 @@ mod test {
 
     #[tokio::test]
     async fn test_tunnel_request_timeout() {
-        let handshake_request = b"CONNECT foo.bar:80 HTTP/1.1\r\n\r\n";
         let handshake_response = b"HTTP/1.1 408 TIMEOUT\r\n\r\n";
 
         let client: Mock = Builder::new()
             .wait(Duration::from_secs(2))
-            .read(handshake_request)
             .write(handshake_response)
             .build();
 
@@ -415,12 +413,10 @@ mod test {
     #[tokio::test]
     async fn test_tunnel_response_timeout() {
         let handshake_request = b"CONNECT foo.bar:80 HTTP/1.1\r\n\r\n";
-        let handshake_response = b"HTTP/1.1 408 TIMEOUT\r\n\r\n";
 
         let client: Mock = Builder::new()
             .read(handshake_request)
             .wait(Duration::from_secs(2))
-            .write(handshake_response)
             .build();
 
         let target: Mock = Builder::new().build();

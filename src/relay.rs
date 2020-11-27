@@ -125,7 +125,7 @@ impl Relay {
             }
 
             if let Err(e) = write_result.unwrap() {
-                error!(
+                println!(
                     "{} failed to write {} bytes. Err = {:?}, CTX={}",
                     self.name, n, e, self.tunnel_ctx
                 );
@@ -338,10 +338,8 @@ mod test_relay_policy {
     #[tokio::test]
     async fn test_timed_operation_timeout() {
         let time_duration = 1;
-        let data = b"data on the wire";
         let mut mock_connection: Mock = Builder::new()
             .wait(Duration::from_secs(time_duration * 2))
-            .read(data)
             .build();
 
         let relay_policy: RelayPolicy = RelayPolicyBuilder::default()
@@ -498,11 +496,8 @@ mod test_relay {
     #[tokio::test]
     async fn test_relay_writer_timeout() {
         let data = b"data on the wire";
-        let reader: Mock = Builder::new().read(data).read(data).build();
-        let writer: Mock = Builder::new()
-            .wait(Duration::from_secs(3))
-            .write(data)
-            .build();
+        let reader: Mock = Builder::new().read(data).build();
+        let writer: Mock = Builder::new().wait(Duration::from_secs(3)).build();
 
         let relay_policy: RelayPolicy = RelayPolicyBuilder::default()
             .min_rate_bpm(1000)
@@ -531,9 +526,8 @@ mod test_relay {
             .read(data)
             .wait(Duration::from_secs_f32(5.5))
             .read(data)
-            .read(data) // this should not happen
             .build();
-        let writer: Mock = Builder::new().write(data).write(data).write(data).build();
+        let writer: Mock = Builder::new().write(data).write(data).build();
 
         let relay_policy: RelayPolicy = RelayPolicyBuilder::default()
             .min_rate_bpm(1)

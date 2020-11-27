@@ -125,7 +125,7 @@ impl Relay {
             }
 
             if let Err(e) = write_result.unwrap() {
-                println!(
+                error!(
                     "{} failed to write {} bytes. Err = {:?}, CTX={}",
                     self.name, n, e, self.tunnel_ctx
                 );

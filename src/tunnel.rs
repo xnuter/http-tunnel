@@ -718,7 +718,7 @@ mod test {
             assert_eq!(&self.target, target_addr);
 
             if let Some(d) = self.delay {
-                tokio::time::delay_for(d).await;
+                tokio::time::sleep(d).await;
             }
 
             match self.error {

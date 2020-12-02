@@ -43,6 +43,7 @@ pub struct TunnelConfig {
 pub enum ProxyMode {
     HTTP,
     HTTPS(Identity),
+    TCP(String),
 }
 
 #[derive(Clone, Builder)]
@@ -102,6 +103,11 @@ impl ProxyConfiguration {
                 (@arg PKCS12: --pk +required +takes_value "pkcs12 filename")
                 (@arg PASSWORD: --password +required  +takes_value "Password for the pkcs12 file")
             )
+            (@subcommand tcp =>
+                (about: "Run the tunnel in TCP proxy mode")
+                (version: "0.1.0")
+                (@arg DESTINATION: --destination -d +required +takes_value "Destination address, e.g. 10.0.0.2:8443")
+            )
         )
         .get_matches();
 
@@ -135,6 +141,16 @@ impl ProxyConfiguration {
                 config
             );
             ProxyMode::HTTPS(identity)
+        } else if let Some(tcp) = matches.subcommand_matches("tcp") {
+            let destination = tcp
+                .value_of("DESTINATION")
+                .expect("misconfiguration for destination")
+                .to_string();
+            info!(
+                "Starting in TCP mode: destination: {}, configuration: {:?}",
+                destination, config
+            );
+            ProxyMode::TCP(destination)
         } else {
             unreachable!("Only http and https commands are supported");
         };

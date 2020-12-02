@@ -15,7 +15,7 @@ use tokio_util::codec::{Decoder, Encoder, Framed};
 
 use crate::configuration::TunnelConfig;
 use crate::proxy_target::TargetConnector;
-use crate::relay::{Relay, RelayBuilder, RelayStats};
+use crate::relay::{Relay, RelayBuilder, RelayPolicy, RelayStats};
 use core::fmt;
 use futures::stream::SplitStream;
 use std::fmt::Display;
@@ -77,7 +77,7 @@ pub struct TunnelCtx {
 }
 
 /// Statistics. No sensitive information.
-#[derive(Serialize)]
+#[derive(Serialize, Builder)]
 pub struct TunnelStats {
     tunnel_ctx: TunnelCtx,
     result: EstablishTunnelResult,
@@ -135,40 +135,14 @@ where
         }
 
         let (client, target) = tunnel_result.unwrap();
-        let (client_recv, client_send) = io::split(client);
-        let (target_recv, target_send) = io::split(target);
-
-        let downstream_relay: Relay = RelayBuilder::default()
-            .name("Downstream")
-            .tunnel_ctx(self.tunnel_ctx)
-            .relay_policy(self.tunnel_config.client_connection.relay_policy)
-            .build()
-            .expect("RelayBuilder failed");
-
-        let upstream_relay: Relay = RelayBuilder::default()
-            .name("Upstream")
-            .tunnel_ctx(self.tunnel_ctx)
-            .relay_policy(self.tunnel_config.target_connection.relay_policy)
-            .build()
-            .expect("RelayBuilder failed");
-
-        let upstream_task =
-            tokio::spawn(
-                async move { downstream_relay.relay_data(client_recv, target_send).await },
-            );
-
-        let downstream_task =
-            tokio::spawn(async move { upstream_relay.relay_data(target_recv, client_send).await });
-
-        let downstream_stats = downstream_task.await??;
-        let upstream_stats = upstream_task.await??;
-
-        Ok(TunnelStats {
-            tunnel_ctx: self.tunnel_ctx,
-            result: EstablishTunnelResult::Ok,
-            upstream_stats: Some(upstream_stats),
-            downstream_stats: Some(downstream_stats),
-        })
+        relay_connections(
+            client,
+            target,
+            self.tunnel_ctx,
+            self.tunnel_config.client_connection.relay_policy,
+            self.tunnel_config.target_connection.relay_policy,
+        )
+        .await
     }
 
     async fn establish_tunnel(
@@ -281,6 +255,50 @@ where
             }
         }
     }
+}
+
+pub async fn relay_connections<
+    D: AsyncRead + AsyncWrite + Sized + Send + Unpin + 'static,
+    U: AsyncRead + AsyncWrite + Sized + Send + 'static,
+>(
+    client: D,
+    target: U,
+    ctx: TunnelCtx,
+    downstream_relay_policy: RelayPolicy,
+    upstream_relay_policy: RelayPolicy,
+) -> io::Result<TunnelStats> {
+    let (client_recv, client_send) = io::split(client);
+    let (target_recv, target_send) = io::split(target);
+
+    let downstream_relay: Relay = RelayBuilder::default()
+        .name("Downstream")
+        .tunnel_ctx(ctx)
+        .relay_policy(downstream_relay_policy)
+        .build()
+        .expect("RelayBuilder failed");
+
+    let upstream_relay: Relay = RelayBuilder::default()
+        .name("Upstream")
+        .tunnel_ctx(ctx)
+        .relay_policy(upstream_relay_policy)
+        .build()
+        .expect("RelayBuilder failed");
+
+    let upstream_task =
+        tokio::spawn(async move { downstream_relay.relay_data(client_recv, target_send).await });
+
+    let downstream_task =
+        tokio::spawn(async move { upstream_relay.relay_data(target_recv, client_send).await });
+
+    let downstream_stats = downstream_task.await??;
+    let upstream_stats = upstream_task.await??;
+
+    Ok(TunnelStats {
+        tunnel_ctx: ctx,
+        result: EstablishTunnelResult::Ok,
+        upstream_stats: Some(upstream_stats),
+        downstream_stats: Some(downstream_stats),
+    })
 }
 
 // cov:begin-ignore-line

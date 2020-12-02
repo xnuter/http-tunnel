@@ -19,7 +19,7 @@ use rand::{thread_rng, Rng};
 use tokio::io;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
-use tokio_tls::TlsAcceptor;
+use tokio_native_tls::TlsAcceptor;
 
 use crate::configuration::{ProxyConfiguration, ProxyMode};
 use crate::http_tunnel_codec::{HttpTunnelCodec, HttpTunnelCodecBuilder, HttpTunnelTarget};

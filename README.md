@@ -12,7 +12,7 @@ In this example, it supports both `HTTP` and `HTTPS` with minimal additional cod
 
 E.g. it can be extended to run the tunnel over `QUIC+HTTP/3` or connect to another tunnel (as long as `AsyncRead + AsyncWrite` is satisfied for the implementation).
 
-You can check [benchmarks](https://github.com/xnuter/http-tunnel/wiki/Benchmarking-the-HTTP-Tunnel-vs-Chisel-(Golang)).
+You can check [benchmarks](https://github.com/xnuter/http-tunnel/wiki).
 
 [Read more](https://medium.com/@xnuter/writing-a-modern-http-s-tunnel-in-rust-56e70d898700) about the design.
 

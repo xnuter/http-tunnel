@@ -1,7 +1,7 @@
 [![Crate](https://img.shields.io/crates/v/http-tunnel.svg)](https://crates.io/crates/http-tunnel)
 ![Clippy/Fmt](https://github.com/xnuter/http-tunnel/workflows/Clippy/Fmt/badge.svg)
 ![Tests](https://github.com/xnuter/http-tunnel/workflows/Tests/badge.svg)
-[![Coverage Status](https://coveralls.io/repos/github/xnuter/http-tunnel/badge.svg?branch=master)](https://coveralls.io/github/xnuter/http-tunnel?branch=master)
+[![Coverage Status](https://coveralls.io/repos/github/xnuter/http-tunnel/badge.svg?branch=main)](https://coveralls.io/github/xnuter/http-tunnel?branch=main)
 
 ### Overview
 

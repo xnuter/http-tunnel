@@ -16,6 +16,8 @@ use tokio::io;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::time::timeout;
 
+pub const NO_TIMEOUT: Duration = Duration::from_secs(300);
+pub const NO_BANDWIDTH_LIMIT: u64 = 1_000_000_000_000_u64;
 const BUFFER_SIZE: usize = 16 * 1024;
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
@@ -192,6 +194,9 @@ impl RelayPolicy {
         start: &Instant,
         total_bytes: usize,
     ) -> Result<(), RelayShutdownReasons> {
+        if self.min_rate_bpm == 0 && self.max_rate_bps >= NO_BANDWIDTH_LIMIT {
+            return Ok(());
+        }
         let elapsed = Instant::now().duration_since(*start);
         if elapsed.as_secs_f32() > 5.
             && total_bytes as u64 / elapsed.as_secs() as u64 > self.max_rate_bps
@@ -210,6 +215,9 @@ impl RelayPolicy {
 
     /// Each async operation must be time-bound.
     pub async fn timed_operation<T: Future>(&self, f: T) -> Result<<T as Future>::Output, ()> {
+        if self.idle_timeout >= NO_TIMEOUT {
+            return Ok(f.await);
+        }
         let result = timeout(self.idle_timeout, f).await;
 
         if let Ok(r) = result {

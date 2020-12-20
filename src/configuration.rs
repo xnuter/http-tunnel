@@ -5,7 +5,7 @@
 /// <LICENSE-MIT or https://opensource.org/licenses/MIT>, at your
 /// option. This file may not be copied, modified, or distributed
 /// except according to those terms.
-use crate::relay::RelayPolicy;
+use crate::relay::{RelayPolicy, NO_BANDWIDTH_LIMIT, NO_TIMEOUT};
 use clap::clap_app;
 use log::{error, info};
 use native_tls::Identity;
@@ -56,8 +56,8 @@ pub struct ProxyConfiguration {
 impl Default for TunnelConfig {
     fn default() -> Self {
         // by default no restrictions
-        let no_limit = 1_000_000_000_000_u64;
-        let default_timeout = Duration::from_secs(300);
+        let no_limit = NO_BANDWIDTH_LIMIT;
+        let default_timeout = NO_TIMEOUT;
         Self {
             client_connection: ClientConnectionConfig {
                 initiation_timeout: default_timeout,

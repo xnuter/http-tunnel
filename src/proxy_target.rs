@@ -74,7 +74,9 @@ where
         let addr = self.dns_resolver.resolve(target_addr).await?;
 
         if let Ok(tcp_stream) = timeout(self.connect_timeout, TcpStream::connect(addr)).await {
-            Ok(tcp_stream?)
+            let stream = tcp_stream?;
+            stream.nodelay()?;
+            Ok(stream)
         } else {
             error!(
                 "Timeout connecting to {}, {}, CTX={}",

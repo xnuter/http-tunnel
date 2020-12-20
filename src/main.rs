@@ -121,6 +121,7 @@ async fn serve_tls(
 
         match socket {
             Ok((stream, _)) => {
+                stream.nodelay().unwrap_or_default();
                 let stream_tls_acceptor = tls_acceptor.clone();
                 let config = config.clone();
                 // handle accepted connections asynchronously
@@ -153,6 +154,7 @@ async fn serve_plain_text(
 
         match socket {
             Ok((stream, _)) => {
+                stream.nodelay().unwrap_or_default();
                 let config = config.clone();
                 // handle accepted connections asynchronously
                 tokio::spawn(async move { tunnel_stream(&config, stream, dns_resolver_ref).await });
@@ -180,6 +182,7 @@ async fn serve_tcp(
         match socket {
             Ok((stream, _)) => {
                 let config = config.clone();
+                stream.nodelay().unwrap_or_default();
                 // handle accepted connections asynchronously
                 tokio::spawn(async move {
                     let ctx = TunnelCtxBuilder::default()

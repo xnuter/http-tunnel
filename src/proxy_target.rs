@@ -131,7 +131,7 @@ impl SimpleCachingDnsResolver {
             None => None,
             Some((cached, expiration)) => {
                 // expiration with gitter to avoid waves of expirations
-                let expiration_gitter = *expiration + thread_rng().gen_range(0, 5_000);
+                let expiration_gitter = *expiration + thread_rng().gen_range(0..5_000);
                 if Instant::now().duration_since(self.start_time).as_millis() < expiration_gitter {
                     Some(self.pick(cached))
                 } else {

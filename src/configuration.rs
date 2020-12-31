@@ -56,25 +56,23 @@ pub struct ProxyConfiguration {
 impl Default for TunnelConfig {
     fn default() -> Self {
         // by default no restrictions
-        let no_limit = NO_BANDWIDTH_LIMIT;
-        let default_timeout = NO_TIMEOUT;
         Self {
             client_connection: ClientConnectionConfig {
-                initiation_timeout: default_timeout,
+                initiation_timeout: NO_TIMEOUT,
                 relay_policy: RelayPolicy {
-                    idle_timeout: default_timeout,
+                    idle_timeout: NO_TIMEOUT,
                     min_rate_bpm: 0,
-                    max_rate_bps: no_limit,
+                    max_rate_bps: NO_BANDWIDTH_LIMIT,
                 },
             },
             target_connection: TargetConnectionConfig {
-                dns_cache_ttl: default_timeout,
+                dns_cache_ttl: NO_TIMEOUT,
                 allowed_targets: Regex::new(".*").expect("Bug: bad default regexp"),
-                connect_timeout: default_timeout,
+                connect_timeout: NO_TIMEOUT,
                 relay_policy: RelayPolicy {
-                    idle_timeout: default_timeout,
+                    idle_timeout: NO_TIMEOUT,
                     min_rate_bpm: 0,
-                    max_rate_bps: no_limit,
+                    max_rate_bps: NO_BANDWIDTH_LIMIT,
                 },
             },
         }

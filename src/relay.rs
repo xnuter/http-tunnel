@@ -11,7 +11,6 @@ use std::time::{Duration, Instant};
 
 use crate::tunnel::TunnelCtx;
 use log::{debug, error, info};
-use serde::export::Formatter;
 use tokio::io;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::time::timeout;
@@ -230,7 +229,7 @@ impl RelayPolicy {
 
 // cov:begin-ignore-line
 impl fmt::Display for RelayStats {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "shutdown_reason={:?}, bytes={}, event_count={}, duration={:?}, rate_kbps={:.3}",

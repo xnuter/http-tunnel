@@ -5,7 +5,7 @@
 
 ### Overview
 
-An implementation of [HTTP Tunnel](https://en.wikipedia.org/wiki/HTTP_tunnel) in Rust.
+An implementation of [HTTP Tunnel](https://en.wikipedia.org/wiki/HTTP_tunnel) in Rust, which can also function as a TCP proxy.
 
 The core code is entirely abstract from the tunnel protocol or transport protocols.
 In this example, it supports both `HTTP` and `HTTPS` with minimal additional code. 
@@ -47,7 +47,7 @@ Now you can start it without any configuration:
 $ http-tunnel --bind 0.0.0.0:8080 http
 ```
 
-There are two modes.
+There are three modes.
 
 * `HTTPS`:
 ```
@@ -59,6 +59,11 @@ $ http-tunnel --config ./config/config.yaml \
 * `HTTP`:
 ```
 $ http-tunnel --config ./config/config-browser.yaml --bind 0.0.0.0:8080 http
+```
+
+* `TCP Proxy`:
+```
+$ http-tunnel --config ./config/config-browser.yaml --bind 0.0.0.0:8080 tcp --destination $REMOTE_HOST:$REMOTE_PORT
 ```
 
 ### Testing with a browser (HTTP)

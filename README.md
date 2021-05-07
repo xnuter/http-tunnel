@@ -8,7 +8,9 @@
 An implementation of [HTTP Tunnel](https://en.wikipedia.org/wiki/HTTP_tunnel) in Rust, which can also function as a TCP proxy.
 
 The core code is entirely abstract from the tunnel protocol or transport protocols.
-In this example, it supports both `HTTP` and `HTTPS` with minimal additional code. 
+In this example, it supports both `HTTP` and `HTTPS` with minimal additional code.
+
+*Please note*, this tunnel doesn't allow tunneling of plain text over HTTP tunnels (only HTTPS connections can be tunneled).
 
 E.g. it can be extended to run the tunnel over `QUIC+HTTP/3` or connect to another tunnel (as long as `AsyncRead + AsyncWrite` is satisfied for the implementation).
 

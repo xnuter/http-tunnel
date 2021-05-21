@@ -14,7 +14,7 @@ use regex::Regex;
 use tokio::io::{Error, ErrorKind};
 use tokio_util::codec::{Decoder, Encoder};
 
-use crate::tunnel::{EstablishTunnelResult, TunnelCtx, TunnelTarget};
+use crate::tunnel::{EstablishTunnelResult, Nugget, TunnelCtx, TunnelTarget};
 use core::fmt;
 
 const REQUEST_END_MARKER: &[u8] = b"\r\n\r\n";
@@ -26,6 +26,7 @@ const MAX_HTTP_REQUEST_SIZE: usize = 1024;
 /// Supports only `CONNECT` method
 struct HttpConnectRequest {
     uri: String,
+    nugget: Option<Nugget>,
     // out of scope of this demo, but let's put it here for extensibility
     // e.g. Authorization/Policies headers
     // headers: Vec<(String, String)>,
@@ -34,6 +35,7 @@ struct HttpConnectRequest {
 #[derive(Builder, Eq, PartialEq, Debug, Clone)]
 pub struct HttpTunnelTarget {
     pub target: String,
+    pub nugget: Option<Nugget>,
     // easily can be extended with something like
     // policies: Vec<TunnelPolicy>
 }
@@ -66,6 +68,7 @@ impl Decoder for HttpTunnelCodec {
                     Ok(Some(
                         HttpTunnelTargetBuilder::default()
                             .target(parsed_request.uri)
+                            .nugget(parsed_request.nugget)
                             .build()
                             .expect("HttpTunnelTargetBuilder failed"),
                     ))
@@ -86,6 +89,10 @@ impl Encoder<EstablishTunnelResult> for HttpTunnelCodec {
     ) -> Result<(), Self::Error> {
         let (code, message) = match item {
             EstablishTunnelResult::Ok => (200, "OK"),
+            EstablishTunnelResult::OkWithNugget => {
+                // do nothing, the upstream should respond instead
+                return Ok(());
+            }
             EstablishTunnelResult::BadRequest => (400, "BAD_REQUEST"),
             EstablishTunnelResult::Forbidden => (403, "FORBIDDEN"),
             EstablishTunnelResult::OperationNotAllowed => (405, "NOT_ALLOWED"),
@@ -107,6 +114,17 @@ impl TunnelTarget for HttpTunnelTarget {
 
     fn target_addr(&self) -> Self::Addr {
         self.target.clone()
+    }
+
+    fn has_nugget(&self) -> bool {
+        self.nugget.is_some()
+    }
+
+    fn nugget(&self) -> Nugget {
+        self.nugget
+            .as_ref()
+            .expect("Cannot use this method without checking `has_nugget`")
+            .clone()
     }
 }
 
@@ -137,22 +155,42 @@ impl HttpConnectRequest {
         HttpConnectRequest::precondition_size(http_request)?;
         HttpConnectRequest::precondition_legal_characters(http_request)?;
 
-        let http_request = String::from_utf8(http_request.to_vec()).expect("Contains only ASCII");
+        let http_request_as_string =
+            String::from_utf8(http_request.to_vec()).expect("Contains only ASCII");
 
-        let mut lines = http_request.split("\r\n");
+        let mut lines = http_request_as_string.split("\r\n");
+
         let request_line = HttpConnectRequest::parse_request_line(
             lines
                 .next()
                 .expect("At least a single line is present at this point"),
         )?;
 
-        Ok(Self {
-            uri: request_line.1.to_string(),
-            // headers: vec![], // if we want to add headers
-        })
+        let has_nugget = request_line.3;
+
+        if has_nugget {
+            let mut host = request_line.1.to_string();
+            for line in lines {
+                if line.to_ascii_lowercase().starts_with("host:") {
+                    host = String::from(line["host:".len()..].trim());
+                    break;
+                }
+            }
+            Ok(Self {
+                uri: host,
+                nugget: Some(Nugget::new(http_request)),
+            })
+        } else {
+            Ok(Self {
+                uri: request_line.1.to_string(),
+                nugget: None,
+            })
+        }
     }
 
-    fn parse_request_line(request_line: &str) -> Result<(&str, &str, &str), EstablishTunnelResult> {
+    fn parse_request_line(
+        request_line: &str,
+    ) -> Result<(&str, &str, &str, bool), EstablishTunnelResult> {
         let request_line_items = request_line.split(' ').collect::<Vec<&str>>();
         HttpConnectRequest::precondition_well_formed(request_line, &request_line_items)?;
 
@@ -160,10 +198,10 @@ impl HttpConnectRequest {
         let uri = request_line_items[1];
         let version = request_line_items[2];
 
-        HttpConnectRequest::check_method(method)?;
+        let has_nugget = HttpConnectRequest::check_method(method)?;
         HttpConnectRequest::check_version(version)?;
 
-        Ok((method, uri, version))
+        Ok((method, uri, version, has_nugget))
     }
 
     fn precondition_well_formed(
@@ -187,13 +225,19 @@ impl HttpConnectRequest {
         }
     }
 
-    fn check_method(method: &str) -> Result<(), EstablishTunnelResult> {
+    #[cfg(not(feature = "plain_text"))]
+    fn check_method(method: &str) -> Result<bool, EstablishTunnelResult> {
         if method != "CONNECT" {
             debug!("Not allowed method {}", method);
             Err(EstablishTunnelResult::OperationNotAllowed)
         } else {
-            Ok(())
+            Ok(false)
         }
+    }
+
+    #[cfg(feature = "plain_text")]
+    fn check_method(method: &str) -> Result<bool, EstablishTunnelResult> {
+        Ok(method != "CONNECT")
     }
 
     fn precondition_legal_characters(http_request: &[u8]) -> Result<(), EstablishTunnelResult> {
@@ -263,6 +307,7 @@ mod tests {
             Ok(Some(
                 HttpTunnelTargetBuilder::default()
                     .target("foo.bar.com:443".to_string())
+                    .nugget(None)
                     .build()
                     .unwrap(),
             ))
@@ -370,15 +415,22 @@ mod tests {
 
     #[test]
     fn test_http_tunnel_encoder() {
-        use crate::strum::IntoEnumIterator;
-
         let mut codec = build_codec();
 
         let pattern = Regex::new(r"^HTTP/1\.1 ([2-5][\d]{2}) [A-Z_]{2,20}\r\n\r\n").unwrap();
 
-        for code in EstablishTunnelResult::iter() {
+        for code in &[
+            EstablishTunnelResult::Ok,
+            EstablishTunnelResult::BadGateway,
+            EstablishTunnelResult::Forbidden,
+            EstablishTunnelResult::GatewayTimeout,
+            EstablishTunnelResult::OperationNotAllowed,
+            EstablishTunnelResult::RequestTimeout,
+            EstablishTunnelResult::ServerError,
+            EstablishTunnelResult::TooManyRequests,
+        ] {
             let mut buffer = BytesMut::new();
-            let encoded = codec.encode(code, &mut buffer);
+            let encoded = codec.encode(code.clone(), &mut buffer);
             assert!(encoded.is_ok());
 
             let str = String::from_utf8(Vec::from(&buffer[..])).expect("Must be valid ASCII");

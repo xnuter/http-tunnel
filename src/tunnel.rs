@@ -21,10 +21,18 @@ use futures::stream::SplitStream;
 use std::fmt::Display;
 use std::time::Duration;
 
-#[derive(Eq, PartialEq, EnumIter, Debug, Copy, Clone, Serialize)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize)]
+pub struct Nugget {
+    data: Vec<u8>,
+}
+
+#[derive(Eq, PartialEq, Debug, Clone, Serialize)]
+#[allow(dead_code)]
 pub enum EstablishTunnelResult {
     /// Successfully connected to target.  
     Ok,
+    /// Successfully connected to target but has a nugget to send after connection establishment.  
+    OkWithNugget,
     /// Malformed request
     BadRequest,
     /// Target is not allowed
@@ -67,6 +75,8 @@ pub struct ConnectionTunnel<H, C, T> {
 pub trait TunnelTarget {
     type Addr;
     fn target_addr(&self) -> Self::Addr;
+    fn has_nugget(&self) -> bool;
+    fn nugget(&self) -> Nugget;
 }
 
 /// We need to be able to trace events in logs/metrics.
@@ -163,7 +173,7 @@ where
 
         let response_sent = timeout(
             configuration.client_connection.initiation_timeout,
-            write.send(response),
+            write.send(response.clone()),
         )
         .await;
 
@@ -201,13 +211,14 @@ where
         let mut target = None;
 
         if connect_request.is_err() {
-            error!("Client established TLS connection but failed to send HTTP CONNECT request within {:?}, CTX={}",
+            error!("Client established TLS connection but failed to send an HTTP request within {:?}, CTX={}",
                    configuration.client_connection.initiation_timeout,
                    self.tunnel_ctx);
             response = EstablishTunnelResult::RequestTimeout;
         } else if let Some(event) = connect_request.unwrap() {
             match event {
                 Ok(decoded_target) => {
+                    let has_nugget = decoded_target.has_nugget();
                     response = match self
                         .connect_to_target(
                             decoded_target,
@@ -217,7 +228,11 @@ where
                     {
                         Ok(t) => {
                             target = Some(t);
-                            EstablishTunnelResult::Ok
+                            if has_nugget {
+                                EstablishTunnelResult::OkWithNugget
+                            } else {
+                                EstablishTunnelResult::Ok
+                            }
                         }
                         Err(e) => e,
                     }
@@ -299,6 +314,16 @@ pub async fn relay_connections<
         upstream_stats: Some(upstream_stats),
         downstream_stats: Some(downstream_stats),
     })
+}
+
+impl Nugget {
+    pub fn new<T: Into<Vec<u8>>>(v: T) -> Self {
+        Self { data: v.into() }
+    }
+
+    pub fn data(self) -> Vec<u8> {
+        self.data
+    }
 }
 
 // cov:begin-ignore-line

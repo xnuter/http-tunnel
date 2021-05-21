@@ -16,7 +16,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io;
-use tokio::io::{AsyncRead, AsyncWrite, Error, ErrorKind};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, Error, ErrorKind};
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use tokio::time::timeout;
@@ -74,8 +74,11 @@ where
         let addr = self.dns_resolver.resolve(target_addr).await?;
 
         if let Ok(tcp_stream) = timeout(self.connect_timeout, TcpStream::connect(addr)).await {
-            let stream = tcp_stream?;
+            let mut stream = tcp_stream?;
             stream.nodelay()?;
+            if target.has_nugget() {
+                stream.write(&target.nugget().clone().data()).await?;
+            }
             Ok(stream)
         } else {
             error!(

@@ -10,11 +10,13 @@ use std::fmt::Write;
 use async_trait::async_trait;
 use bytes::BytesMut;
 use log::debug;
+use log::info;
 use regex::Regex;
 use tokio::io::{Error, ErrorKind};
 use tokio_util::codec::{Decoder, Encoder};
 
-use crate::tunnel::{EstablishTunnelResult, Nugget, TunnelCtx, TunnelTarget};
+use crate::proxy_target::Nugget;
+use crate::tunnel::{EstablishTunnelResult, TunnelCtx, TunnelTarget};
 use core::fmt;
 use std::str::Split;
 
@@ -157,6 +159,8 @@ impl HttpConnectRequest {
         let http_request_as_string =
             String::from_utf8(http_request.to_vec()).expect("Contains only ASCII");
 
+        info!("Request: {}", http_request_as_string);
+
         let mut lines = http_request_as_string.split("\r\n");
 
         let request_line = HttpConnectRequest::parse_request_line(
@@ -169,7 +173,7 @@ impl HttpConnectRequest {
 
         if has_nugget {
             Ok(Self {
-                uri: HttpConnectRequest::extract_destination_host(&mut lines)
+                uri: HttpConnectRequest::extract_destination_host(&mut lines, request_line.1)
                     .unwrap_or_else(|| request_line.1.to_string()),
                 nugget: Some(Nugget::new(http_request)),
             })
@@ -181,11 +185,19 @@ impl HttpConnectRequest {
         }
     }
 
-    fn extract_destination_host(lines: &mut Split<&str>) -> Option<String> {
+    fn extract_destination_host(lines: &mut Split<&str>, endpoint: &str) -> Option<String> {
         let host_header = "host:";
         for line in lines {
             if line.to_ascii_lowercase().starts_with(host_header) {
-                return Some(String::from(line[host_header.len()..].trim()));
+                let mut host = String::from(line[host_header.len()..].trim());
+                if host.rfind(':').is_none() {
+                    if endpoint.contains("https://") {
+                        host.push_str(":443");
+                    } else {
+                        host.push_str(":80");
+                    }
+                }
+                return Some(host);
             }
         }
         None
@@ -247,7 +259,7 @@ impl HttpConnectRequest {
         for b in http_request {
             match b {
                 // non-ascii characters don't make sense in this context
-                32..=126 | 10 | 13 => {}
+                32..=126 | 9 | 10 | 13 => {}
                 _ => {
                     debug!("Bad request header. Illegal character: {:#04x}", b);
                     return Err(EstablishTunnelResult::BadRequest);
@@ -281,6 +293,8 @@ mod tests {
         EstablishTunnelResult, HttpTunnelCodec, HttpTunnelCodecBuilder, HttpTunnelTargetBuilder,
         MAX_HTTP_REQUEST_SIZE, REQUEST_END_MARKER,
     };
+    use crate::proxy_target::Nugget;
+    use crate::tunnel::EstablishTunnelResult::Forbidden;
     use crate::tunnel::TunnelCtxBuilder;
 
     #[test]
@@ -354,6 +368,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "plain_text"))]
     fn test_parse_not_allowed_method() {
         let mut codec = build_codec();
         let mut buffer = BytesMut::new();
@@ -362,6 +377,96 @@ mod tests {
         let result = codec.decode(&mut buffer);
 
         assert_eq!(result, Err(EstablishTunnelResult::OperationNotAllowed));
+    }
+
+    #[test]
+    #[cfg(feature = "plain_text")]
+    fn test_parse_plain_text_method() {
+        let mut codec = build_codec();
+        let mut buffer = BytesMut::new();
+        buffer.put_slice(b"GET https://foo.bar.com:443/get HTTP/1.1\r\n");
+        buffer.put_slice(b"connection: keep-alive\r\n");
+        buffer.put_slice(b"Host: \tfoo.bar.com:443 \t\r\n");
+        buffer.put_slice(b"User-Agent: whatever");
+        buffer.put_slice(REQUEST_END_MARKER);
+        let result = codec.decode(&mut buffer);
+
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().target, "foo.bar.com:443");
+    }
+
+    #[test]
+    #[cfg(feature = "plain_text")]
+    fn test_parse_plain_text_default_https_port() {
+        let mut codec = build_codec();
+        let mut buffer = BytesMut::new();
+        buffer.put_slice(b"GET https://foo.bar.com/get HTTP/1.1\r\n");
+        buffer.put_slice(b"connection: keep-alive\r\n");
+        buffer.put_slice(b"Host: \tfoo.bar.com \t\r\n");
+        buffer.put_slice(b"User-Agent: whatever");
+        buffer.put_slice(REQUEST_END_MARKER);
+        let result = codec.decode(&mut buffer);
+
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().target, "foo.bar.com:443");
+    }
+
+    #[test]
+    #[cfg(feature = "plain_text")]
+    fn test_parse_plain_text_default_http_port() {
+        let mut codec = build_codec();
+        let mut buffer = BytesMut::new();
+        buffer.put_slice(b"GET http://foo.bar.com/get HTTP/1.1\r\n");
+        buffer.put_slice(b"connection: keep-alive\r\n");
+        buffer.put_slice(b"Host: \tfoo.bar.com \t\r\n");
+        buffer.put_slice(b"User-Agent: whatever");
+        buffer.put_slice(REQUEST_END_MARKER);
+        let result = codec.decode(&mut buffer);
+
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().target, "foo.bar.com:80");
+    }
+
+    #[test]
+    #[cfg(feature = "plain_text")]
+    fn test_parse_plain_text_nugget() {
+        let mut codec = build_codec();
+        let mut buffer = BytesMut::new();
+        buffer.put_slice(b"GET https://foo.bar.com:443/get HTTP/1.1\r\n");
+        buffer.put_slice(b"connection: keep-alive\r\n");
+        buffer.put_slice(b"Host: \tfoo.bar.com:443 \t\r\n");
+        buffer.put_slice(b"User-Agent: whatever");
+        buffer.put_slice(REQUEST_END_MARKER);
+        let result = codec.decode(&mut buffer);
+
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert!(result.nugget.is_some());
+        let nugget = result.nugget.unwrap();
+        assert_eq!(nugget, Nugget::new(buffer.to_vec()));
+    }
+
+    #[test]
+    #[cfg(feature = "plain_text")]
+    fn test_parse_plain_text_method_forbidden_domain() {
+        let mut codec = build_codec();
+        let mut buffer = BytesMut::new();
+        buffer.put_slice(b"GET https://foo.bar.com:443/get HTTP/1.1\r\n");
+        buffer.put_slice(b"connection: keep-alive\r\n");
+        buffer.put_slice(b"Host: \tsome.uknown.site.com:443 \t\r\n");
+        buffer.put_slice(b"User-Agent: whatever");
+        buffer.put_slice(REQUEST_END_MARKER);
+        let result = codec.decode(&mut buffer);
+
+        assert_eq!(result, Err(Forbidden));
     }
 
     #[test]
@@ -447,7 +552,7 @@ mod tests {
 
         HttpTunnelCodecBuilder::default()
             .tunnel_ctx(ctx)
-            .enabled_targets(Regex::new(r"foo\.bar\.com:443").unwrap())
+            .enabled_targets(Regex::new(r"foo\.bar\.com:(443|80)").unwrap())
             .build()
             .unwrap()
     }

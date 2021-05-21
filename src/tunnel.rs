@@ -14,18 +14,12 @@ use tokio::time::timeout;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
 use crate::configuration::TunnelConfig;
-use crate::proxy_target::TargetConnector;
+use crate::proxy_target::{Nugget, TargetConnector};
 use crate::relay::{Relay, RelayBuilder, RelayPolicy, RelayStats};
 use core::fmt;
 use futures::stream::SplitStream;
 use std::fmt::Display;
-use std::sync::Arc;
 use std::time::Duration;
-
-#[derive(Eq, PartialEq, Debug, Clone)]
-pub struct Nugget {
-    data: Arc<Vec<u8>>,
-}
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize)]
 #[allow(dead_code)]
@@ -315,18 +309,6 @@ pub async fn relay_connections<
         upstream_stats: Some(upstream_stats),
         downstream_stats: Some(downstream_stats),
     })
-}
-
-impl Nugget {
-    pub fn new<T: Into<Vec<u8>>>(v: T) -> Self {
-        Self {
-            data: Arc::new(v.into()),
-        }
-    }
-
-    pub fn data(self) -> Arc<Vec<u8>> {
-        self.data
-    }
 }
 
 // cov:begin-ignore-line
@@ -676,6 +658,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[cfg(not(feature = "plain_text"))]
     async fn test_tunnel_not_allowed() {
         let handshake_request = b"GET foo.bar:80 HTTP/1.1\r\n\r\n";
         let handshake_response = b"HTTP/1.1 405 NOT_ALLOWED\r\n\r\n";

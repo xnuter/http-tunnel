@@ -44,6 +44,11 @@ pub struct SimpleTcpConnector<D, R: DnsResolver> {
     _phantom_target: PhantomData<D>,
 }
 
+#[derive(Eq, PartialEq, Debug, Clone)]
+pub struct Nugget {
+    data: Arc<Vec<u8>>,
+}
+
 type CachedSocketAddrs = (Vec<SocketAddr>, u128);
 
 /// Caching DNS resolution results to minimize DNS lookups.
@@ -77,7 +82,20 @@ where
             let mut stream = tcp_stream?;
             stream.nodelay()?;
             if target.has_nugget() {
-                stream.write(&target.nugget().clone().data()).await?;
+                if let Ok(written_successfully) = timeout(
+                    self.connect_timeout,
+                    stream.write_all(&target.nugget().data),
+                )
+                .await
+                {
+                    written_successfully?;
+                } else {
+                    error!(
+                        "Timeout sending nugget to {}, {}, CTX={}",
+                        addr, target_addr, self.tunnel_ctx
+                    );
+                    return Err(Error::from(ErrorKind::TimedOut));
+                }
             }
             Ok(stream)
         } else {
@@ -172,5 +190,13 @@ impl SimpleCachingDnsResolver {
         }
 
         Ok(resolved)
+    }
+}
+
+impl Nugget {
+    pub fn new<T: Into<Vec<u8>>>(v: T) -> Self {
+        Self {
+            data: Arc::new(v.into()),
+        }
     }
 }

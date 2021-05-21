@@ -19,11 +19,12 @@ use crate::relay::{Relay, RelayBuilder, RelayPolicy, RelayStats};
 use core::fmt;
 use futures::stream::SplitStream;
 use std::fmt::Display;
+use std::sync::Arc;
 use std::time::Duration;
 
-#[derive(Eq, PartialEq, Debug, Clone, Serialize)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub struct Nugget {
-    data: Vec<u8>,
+    data: Arc<Vec<u8>>,
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize)]
@@ -76,7 +77,7 @@ pub trait TunnelTarget {
     type Addr;
     fn target_addr(&self) -> Self::Addr;
     fn has_nugget(&self) -> bool;
-    fn nugget(&self) -> Nugget;
+    fn nugget(&self) -> &Nugget;
 }
 
 /// We need to be able to trace events in logs/metrics.
@@ -318,10 +319,12 @@ pub async fn relay_connections<
 
 impl Nugget {
     pub fn new<T: Into<Vec<u8>>>(v: T) -> Self {
-        Self { data: v.into() }
+        Self {
+            data: Arc::new(v.into()),
+        }
     }
 
-    pub fn data(self) -> Vec<u8> {
+    pub fn data(self) -> Arc<Vec<u8>> {
         self.data
     }
 }

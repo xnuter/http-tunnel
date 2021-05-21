@@ -120,11 +120,10 @@ impl TunnelTarget for HttpTunnelTarget {
         self.nugget.is_some()
     }
 
-    fn nugget(&self) -> Nugget {
+    fn nugget(&self) -> &Nugget {
         self.nugget
             .as_ref()
             .expect("Cannot use this method without checking `has_nugget`")
-            .clone()
     }
 }
 

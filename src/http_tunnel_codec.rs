@@ -16,6 +16,7 @@ use tokio_util::codec::{Decoder, Encoder};
 
 use crate::tunnel::{EstablishTunnelResult, Nugget, TunnelCtx, TunnelTarget};
 use core::fmt;
+use std::str::Split;
 
 const REQUEST_END_MARKER: &[u8] = b"\r\n\r\n";
 /// A reasonable value to limit possible header size
@@ -169,15 +170,9 @@ impl HttpConnectRequest {
         let has_nugget = request_line.3;
 
         if has_nugget {
-            let mut host = request_line.1.to_string();
-            for line in lines {
-                if line.to_ascii_lowercase().starts_with("host:") {
-                    host = String::from(line["host:".len()..].trim());
-                    break;
-                }
-            }
             Ok(Self {
-                uri: host,
+                uri: HttpConnectRequest::extract_destination_host(&mut lines)
+                    .unwrap_or_else(|| request_line.1.to_string()),
                 nugget: Some(Nugget::new(http_request)),
             })
         } else {
@@ -186,6 +181,16 @@ impl HttpConnectRequest {
                 nugget: None,
             })
         }
+    }
+
+    fn extract_destination_host(lines: &mut Split<&str>) -> Option<String> {
+        let host_header = "host:";
+        for line in lines {
+            if line.to_ascii_lowercase().starts_with(host_header) {
+                return Some(String::from(line[host_header.len()..].trim()));
+            }
+        }
+        None
     }
 
     fn parse_request_line(

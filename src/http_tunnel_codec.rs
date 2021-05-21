@@ -19,12 +19,11 @@ use core::fmt;
 use std::str::Split;
 
 const REQUEST_END_MARKER: &[u8] = b"\r\n\r\n";
-/// A reasonable value to limit possible header size
-/// as long as we only need to support `CONNECT` requests.
-const MAX_HTTP_REQUEST_SIZE: usize = 1024;
+/// A reasonable value to limit possible header size.
+const MAX_HTTP_REQUEST_SIZE: usize = 16384;
 
 /// HTTP/1.1 request representation
-/// Supports only `CONNECT` method
+/// Supports only `CONNECT` method, unless the `plain_text` feature is enabled
 struct HttpConnectRequest {
     uri: String,
     nugget: Option<Nugget>,

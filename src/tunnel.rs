@@ -166,13 +166,17 @@ where
 
         let (response, target) = self.process_tunnel_request(&configuration, &mut read).await;
 
-        let response_sent = timeout(
-            configuration.client_connection.initiation_timeout,
-            write.send(response.clone()),
-        )
-        .await;
+        let response_sent = match response {
+            EstablishTunnelResult::OkWithNugget => true,
+            _ => timeout(
+                configuration.client_connection.initiation_timeout,
+                write.send(response.clone()),
+            )
+            .await
+            .is_ok(),
+        };
 
-        if response_sent.is_ok() {
+        if response_sent {
             match target {
                 None => Err(response),
                 Some(u) => {

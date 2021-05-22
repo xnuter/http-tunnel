@@ -136,8 +136,18 @@ impl fmt::Display for HttpTunnelTarget {
 }
 // cov:end-ignore-line
 
+#[cfg(not(feature = "plain_text"))]
 fn got_http_request(buffer: &BytesMut) -> bool {
     buffer.len() >= MAX_HTTP_REQUEST_SIZE || buffer.ends_with(REQUEST_END_MARKER)
+}
+
+#[cfg(feature = "plain_text")]
+fn got_http_request(buffer: &BytesMut) -> bool {
+    buffer.len() >= MAX_HTTP_REQUEST_SIZE
+        || buffer
+            .windows(REQUEST_END_MARKER.len())
+            .find(|w| *w == REQUEST_END_MARKER)
+            .is_some()
 }
 
 impl From<Error> for EstablishTunnelResult {
@@ -440,6 +450,28 @@ mod tests {
         buffer.put_slice(b"Host: \tfoo.bar.com:443 \t\r\n");
         buffer.put_slice(b"User-Agent: whatever");
         buffer.put_slice(REQUEST_END_MARKER);
+        let result = codec.decode(&mut buffer);
+
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert!(result.nugget.is_some());
+        let nugget = result.nugget.unwrap();
+        assert_eq!(nugget, Nugget::new(buffer.to_vec()));
+    }
+
+    #[test]
+    #[cfg(feature = "plain_text")]
+    fn test_parse_plain_text_with_body() {
+        let mut codec = build_codec();
+        let mut buffer = BytesMut::new();
+        buffer.put_slice(b"POST https://foo.bar.com:443/get HTTP/1.1\r\n");
+        buffer.put_slice(b"connection: keep-alive\r\n");
+        buffer.put_slice(b"Host: \tfoo.bar.com:443 \t\r\n");
+        buffer.put_slice(b"User-Agent: whatever");
+        buffer.put_slice(REQUEST_END_MARKER);
+        buffer.put_slice(b"{body: 'some json body'}");
         let result = codec.decode(&mut buffer);
 
         assert!(result.is_ok());

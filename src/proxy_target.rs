@@ -84,7 +84,7 @@ where
             if target.has_nugget() {
                 if let Ok(written_successfully) = timeout(
                     self.connect_timeout,
-                    stream.write_all(&target.nugget().data),
+                    stream.write_all(&target.nugget().data()),
                 )
                 .await
                 {
@@ -198,5 +198,9 @@ impl Nugget {
         Self {
             data: Arc::new(v.into()),
         }
+    }
+
+    pub fn data(&self) -> Arc<Vec<u8>> {
+        self.data.clone()
     }
 }

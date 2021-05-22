@@ -300,7 +300,9 @@ mod tests {
         EstablishTunnelResult, HttpTunnelCodec, HttpTunnelCodecBuilder, HttpTunnelTargetBuilder,
         MAX_HTTP_REQUEST_SIZE, REQUEST_END_MARKER,
     };
+    #[cfg(feature = "plain_text")]
     use crate::proxy_target::Nugget;
+    #[cfg(feature = "plain_text")]
     use crate::tunnel::EstablishTunnelResult::Forbidden;
     use crate::tunnel::TunnelCtxBuilder;
 

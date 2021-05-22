@@ -336,7 +336,7 @@ mod test {
 
     use crate::relay::RelayPolicy;
 
-    use self::tokio::io::{Error, ErrorKind};
+    use self::tokio::io::{AsyncWriteExt, Error, ErrorKind};
     use crate::configuration::{ClientConnectionConfig, TargetConnectionConfig, TunnelConfig};
     use crate::http_tunnel_codec::{HttpTunnelCodec, HttpTunnelCodecBuilder, HttpTunnelTarget};
     use crate::proxy_target::TargetConnector;
@@ -398,6 +398,61 @@ mod test {
         let downstream_stats = stats.downstream_stats.unwrap();
 
         assert_eq!(upstream_stats.total_bytes, tunneled_request.len());
+        assert_eq!(downstream_stats.total_bytes, tunneled_response.len());
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "plain_text")]
+    async fn test_tunnel_plain_text_ok() {
+        let handshake_request =
+            b"GET https://foo.bar/index.html HTTP/1.1\r\nHost: foo.bar:443\r\n\r\n";
+        let tunneled_response = b"HTTP/1.1 200 OK\r\n\r\n";
+
+        let client: Mock = Builder::new()
+            .read(handshake_request)
+            .write(tunneled_response)
+            .build();
+
+        let target: Mock = Builder::new()
+            .write(handshake_request)
+            .read(tunneled_response)
+            .build();
+
+        let ctx = TunnelCtxBuilder::default()
+            .id(thread_rng().gen::<u128>())
+            .build()
+            .expect("TunnelCtxBuilder failed");
+
+        let codec: HttpTunnelCodec = HttpTunnelCodecBuilder::default()
+            .tunnel_ctx(ctx)
+            .enabled_targets(Regex::new(r"foo\.bar:443").unwrap())
+            .build()
+            .expect("ConnectRequestCodecBuilder failed");
+
+        let connector = MockTargetConnector {
+            target: "foo.bar:443".to_string(),
+            mock: Some(target),
+            delay: None,
+            error: None,
+        };
+
+        let default_timeout = Duration::from_secs(5);
+        let config = build_config(default_timeout);
+
+        let result = ConnectionTunnel::new(codec, connector, client, config, ctx)
+            .start()
+            .await;
+
+        assert!(result.is_ok());
+        let stats = result.unwrap();
+        assert_eq!(stats.result, EstablishTunnelResult::Ok);
+        assert!(stats.upstream_stats.is_some());
+        assert!(stats.downstream_stats.is_some());
+
+        let upstream_stats = stats.upstream_stats.unwrap();
+        let downstream_stats = stats.downstream_stats.unwrap();
+
+        assert_eq!(upstream_stats.total_bytes, 0);
         assert_eq!(downstream_stats.total_bytes, tunneled_response.len());
     }
 
@@ -751,7 +806,13 @@ mod test {
             }
 
             match self.error {
-                None => Ok(self.mock.take().unwrap()),
+                None => {
+                    let mut stream = self.mock.take().unwrap();
+                    if target.has_nugget() {
+                        stream.write_all(&target.nugget().data()).await?;
+                    }
+                    Ok(stream)
+                }
                 Some(e) => Err(Error::from(e)),
             }
         }

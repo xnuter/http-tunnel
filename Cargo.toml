@@ -1,6 +1,6 @@
 [package]
 name = "http-tunnel"
-version = "0.1.9"
+version = "0.1.10"
 authors = ["Eugene Retunsky"]
 license = "MIT OR Apache-2.0"
 edition = "2018"

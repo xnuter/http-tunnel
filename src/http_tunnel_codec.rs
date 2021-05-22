@@ -10,7 +10,6 @@ use std::fmt::Write;
 use async_trait::async_trait;
 use bytes::BytesMut;
 use log::debug;
-use log::info;
 use regex::Regex;
 use tokio::io::{Error, ErrorKind};
 use tokio_util::codec::{Decoder, Encoder};
@@ -158,8 +157,6 @@ impl HttpConnectRequest {
 
         let http_request_as_string =
             String::from_utf8(http_request.to_vec()).expect("Contains only ASCII");
-
-        info!("Request: {}", http_request_as_string);
 
         let mut lines = http_request_as_string.split("\r\n");
 

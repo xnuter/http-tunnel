@@ -196,10 +196,9 @@ impl HttpConnectRequest {
         const HOST_HEADER: &str = "host:";
 
         lines
-            .into_iter()
             .find(|line| line.to_ascii_lowercase().starts_with(HOST_HEADER))
             .map(|line| String::from(line[HOST_HEADER.len()..].trim()))
-            .and_then(|mut host| {
+            .map(|mut host| {
                 if host.rfind(':').is_none() {
                     host.push_str(if endpoint.starts_with("https://") {
                         ":443"
@@ -207,7 +206,7 @@ impl HttpConnectRequest {
                         ":80"
                     });
                 }
-                Some(host)
+                host
             })
     }
 

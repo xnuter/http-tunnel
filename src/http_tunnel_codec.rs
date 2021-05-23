@@ -193,21 +193,22 @@ impl HttpConnectRequest {
     }
 
     fn extract_destination_host(lines: &mut Split<&str>, endpoint: &str) -> Option<String> {
-        let host_header = "host:";
-        for line in lines {
-            if line.to_ascii_lowercase().starts_with(host_header) {
-                let mut host = String::from(line[host_header.len()..].trim());
+        const HOST_HEADER: &str = "host:";
+
+        lines
+            .into_iter()
+            .find(|line| line.to_ascii_lowercase().starts_with(HOST_HEADER))
+            .map(|line| String::from(line[HOST_HEADER.len()..].trim()))
+            .and_then(|mut host| {
                 if host.rfind(':').is_none() {
-                    if endpoint.contains("https://") {
-                        host.push_str(":443");
+                    host.push_str(if endpoint.starts_with("https://") {
+                        ":443"
                     } else {
-                        host.push_str(":80");
-                    }
+                        ":80"
+                    });
                 }
-                return Some(host);
-            }
-        }
-        None
+                Some(host)
+            })
     }
 
     fn parse_request_line(

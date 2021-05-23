@@ -197,14 +197,16 @@ impl HttpConnectRequest {
 
         lines
             .find(|line| line.to_ascii_lowercase().starts_with(HOST_HEADER))
-            .map(|line| String::from(line[HOST_HEADER.len()..].trim()))
-            .map(|mut host| {
+            .map(|line| line[HOST_HEADER.len()..].trim())
+            .map(|host| {
+                let mut host = String::from(host);
                 if host.rfind(':').is_none() {
-                    host.push_str(if endpoint.starts_with("https://") {
+                    let default_port = if endpoint.to_ascii_lowercase().starts_with("https://") {
                         ":443"
                     } else {
                         ":80"
-                    });
+                    };
+                    host.push_str(default_port);
                 }
                 host
             })

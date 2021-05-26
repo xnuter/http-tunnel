@@ -14,17 +14,20 @@ use tokio::time::timeout;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
 use crate::configuration::TunnelConfig;
-use crate::proxy_target::TargetConnector;
+use crate::proxy_target::{Nugget, TargetConnector};
 use crate::relay::{Relay, RelayBuilder, RelayPolicy, RelayStats};
 use core::fmt;
 use futures::stream::SplitStream;
 use std::fmt::Display;
 use std::time::Duration;
 
-#[derive(Eq, PartialEq, EnumIter, Debug, Copy, Clone, Serialize)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize)]
+#[allow(dead_code)]
 pub enum EstablishTunnelResult {
     /// Successfully connected to target.  
     Ok,
+    /// Successfully connected to target but has a nugget to send after connection establishment.  
+    OkWithNugget,
     /// Malformed request
     BadRequest,
     /// Target is not allowed
@@ -67,6 +70,8 @@ pub struct ConnectionTunnel<H, C, T> {
 pub trait TunnelTarget {
     type Addr;
     fn target_addr(&self) -> Self::Addr;
+    fn has_nugget(&self) -> bool;
+    fn nugget(&self) -> &Nugget;
 }
 
 /// We need to be able to trace events in logs/metrics.
@@ -161,13 +166,17 @@ where
 
         let (response, target) = self.process_tunnel_request(&configuration, &mut read).await;
 
-        let response_sent = timeout(
-            configuration.client_connection.initiation_timeout,
-            write.send(response),
-        )
-        .await;
+        let response_sent = match response {
+            EstablishTunnelResult::OkWithNugget => true,
+            _ => timeout(
+                configuration.client_connection.initiation_timeout,
+                write.send(response.clone()),
+            )
+            .await
+            .is_ok(),
+        };
 
-        if response_sent.is_ok() {
+        if response_sent {
             match target {
                 None => Err(response),
                 Some(u) => {
@@ -201,13 +210,14 @@ where
         let mut target = None;
 
         if connect_request.is_err() {
-            error!("Client established TLS connection but failed to send HTTP CONNECT request within {:?}, CTX={}",
+            error!("Client established TLS connection but failed to send an HTTP request within {:?}, CTX={}",
                    configuration.client_connection.initiation_timeout,
                    self.tunnel_ctx);
             response = EstablishTunnelResult::RequestTimeout;
         } else if let Some(event) = connect_request.unwrap() {
             match event {
                 Ok(decoded_target) => {
+                    let has_nugget = decoded_target.has_nugget();
                     response = match self
                         .connect_to_target(
                             decoded_target,
@@ -217,7 +227,11 @@ where
                     {
                         Ok(t) => {
                             target = Some(t);
-                            EstablishTunnelResult::Ok
+                            if has_nugget {
+                                EstablishTunnelResult::OkWithNugget
+                            } else {
+                                EstablishTunnelResult::Ok
+                            }
                         }
                         Err(e) => e,
                     }
@@ -322,7 +336,7 @@ mod test {
 
     use crate::relay::RelayPolicy;
 
-    use self::tokio::io::{Error, ErrorKind};
+    use self::tokio::io::{AsyncWriteExt, Error, ErrorKind};
     use crate::configuration::{ClientConnectionConfig, TargetConnectionConfig, TunnelConfig};
     use crate::http_tunnel_codec::{HttpTunnelCodec, HttpTunnelCodecBuilder, HttpTunnelTarget};
     use crate::proxy_target::TargetConnector;
@@ -384,6 +398,61 @@ mod test {
         let downstream_stats = stats.downstream_stats.unwrap();
 
         assert_eq!(upstream_stats.total_bytes, tunneled_request.len());
+        assert_eq!(downstream_stats.total_bytes, tunneled_response.len());
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "plain_text")]
+    async fn test_tunnel_plain_text_ok() {
+        let handshake_request =
+            b"GET https://foo.bar/index.html HTTP/1.1\r\nHost: foo.bar:443\r\n\r\n";
+        let tunneled_response = b"HTTP/1.1 200 OK\r\n\r\n";
+
+        let client: Mock = Builder::new()
+            .read(handshake_request)
+            .write(tunneled_response)
+            .build();
+
+        let target: Mock = Builder::new()
+            .write(handshake_request)
+            .read(tunneled_response)
+            .build();
+
+        let ctx = TunnelCtxBuilder::default()
+            .id(thread_rng().gen::<u128>())
+            .build()
+            .expect("TunnelCtxBuilder failed");
+
+        let codec: HttpTunnelCodec = HttpTunnelCodecBuilder::default()
+            .tunnel_ctx(ctx)
+            .enabled_targets(Regex::new(r"foo\.bar:443").unwrap())
+            .build()
+            .expect("ConnectRequestCodecBuilder failed");
+
+        let connector = MockTargetConnector {
+            target: "foo.bar:443".to_string(),
+            mock: Some(target),
+            delay: None,
+            error: None,
+        };
+
+        let default_timeout = Duration::from_secs(5);
+        let config = build_config(default_timeout);
+
+        let result = ConnectionTunnel::new(codec, connector, client, config, ctx)
+            .start()
+            .await;
+
+        assert!(result.is_ok());
+        let stats = result.unwrap();
+        assert_eq!(stats.result, EstablishTunnelResult::Ok);
+        assert!(stats.upstream_stats.is_some());
+        assert!(stats.downstream_stats.is_some());
+
+        let upstream_stats = stats.upstream_stats.unwrap();
+        let downstream_stats = stats.downstream_stats.unwrap();
+
+        assert_eq!(upstream_stats.total_bytes, 0);
         assert_eq!(downstream_stats.total_bytes, tunneled_response.len());
     }
 
@@ -648,6 +717,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[cfg(not(feature = "plain_text"))]
     async fn test_tunnel_not_allowed() {
         let handshake_request = b"GET foo.bar:80 HTTP/1.1\r\n\r\n";
         let handshake_response = b"HTTP/1.1 405 NOT_ALLOWED\r\n\r\n";
@@ -736,7 +806,13 @@ mod test {
             }
 
             match self.error {
-                None => Ok(self.mock.take().unwrap()),
+                None => {
+                    let mut stream = self.mock.take().unwrap();
+                    if target.has_nugget() {
+                        stream.write_all(&target.nugget().data()).await?;
+                    }
+                    Ok(stream)
+                }
                 Some(e) => Err(Error::from(e)),
             }
         }

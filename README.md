@@ -11,6 +11,11 @@ The core code is entirely abstract from the tunnel protocol or transport protoco
 In this example, it supports both `HTTP` and `HTTPS` with minimal additional code.
 
 *Please note*, this tunnel doesn't allow tunneling of plain text over HTTP tunnels (only HTTPS connections can be tunneled).
+If you need this functionality you need to build the `http-tunnel` with the `plain_text` feature:
+
+```bash
+cargo build --release --features plain_text
+```
 
 E.g. it can be extended to run the tunnel over `QUIC+HTTP/3` or connect to another tunnel (as long as `AsyncRead + AsyncWrite` is satisfied for the implementation).
 

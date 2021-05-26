@@ -16,7 +16,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io;
-use tokio::io::{AsyncRead, AsyncWrite, Error, ErrorKind};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, Error, ErrorKind};
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use tokio::time::timeout;
@@ -42,6 +42,11 @@ pub struct SimpleTcpConnector<D, R: DnsResolver> {
     dns_resolver: R,
     #[builder(setter(skip))]
     _phantom_target: PhantomData<D>,
+}
+
+#[derive(Eq, PartialEq, Debug, Clone)]
+pub struct Nugget {
+    data: Arc<Vec<u8>>,
 }
 
 type CachedSocketAddrs = (Vec<SocketAddr>, u128);
@@ -74,8 +79,24 @@ where
         let addr = self.dns_resolver.resolve(target_addr).await?;
 
         if let Ok(tcp_stream) = timeout(self.connect_timeout, TcpStream::connect(addr)).await {
-            let stream = tcp_stream?;
+            let mut stream = tcp_stream?;
             stream.nodelay()?;
+            if target.has_nugget() {
+                if let Ok(written_successfully) = timeout(
+                    self.connect_timeout,
+                    stream.write_all(&target.nugget().data()),
+                )
+                .await
+                {
+                    written_successfully?;
+                } else {
+                    error!(
+                        "Timeout sending nugget to {}, {}, CTX={}",
+                        addr, target_addr, self.tunnel_ctx
+                    );
+                    return Err(Error::from(ErrorKind::TimedOut));
+                }
+            }
             Ok(stream)
         } else {
             error!(
@@ -169,5 +190,17 @@ impl SimpleCachingDnsResolver {
         }
 
         Ok(resolved)
+    }
+}
+
+impl Nugget {
+    pub fn new<T: Into<Vec<u8>>>(v: T) -> Self {
+        Self {
+            data: Arc::new(v.into()),
+        }
+    }
+
+    pub fn data(&self) -> Arc<Vec<u8>> {
+        self.data.clone()
     }
 }

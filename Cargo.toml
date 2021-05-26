@@ -1,6 +1,6 @@
 [package]
 name = "http-tunnel"
-version = "0.1.9"
+version = "0.1.10"
 authors = ["Eugene Retunsky"]
 license = "MIT OR Apache-2.0"
 edition = "2018"
@@ -42,8 +42,7 @@ time = "0.1"
 [dev-dependencies]
 tokio-test = "0.4"
 
-[profile.dev]
-opt-level = 0
-
-[profile.release]
-opt-level = 3
+[features]
+# For legacy software you can enable plain_text tunnelling
+default = []
+plain_text = []

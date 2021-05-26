@@ -10,9 +10,6 @@
 extern crate derive_builder;
 #[macro_use]
 extern crate serde_derive;
-extern crate strum;
-#[macro_use]
-extern crate strum_macros;
 
 use log::{error, info, LevelFilter};
 use rand::{thread_rng, Rng};
@@ -200,6 +197,7 @@ async fn serve_tcp(
                     match connector
                         .connect(&HttpTunnelTarget {
                             target: destination_copy,
+                            nugget: None,
                         })
                         .await
                     {

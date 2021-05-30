@@ -51,11 +51,11 @@ pub struct Nugget {
 
 type CachedSocketAddrs = (Vec<SocketAddr>, u128);
 
-/// Caching DNS resolution results to minimize DNS lookups.
-/// The cache implementation is relaxed, it allows concurrent lookups of the same key,
+/// Caching DNS resolution to minimize DNS look-ups.
+/// The cache has relaxed consistency, it allows concurrent DNS look-ups of the same key,
 /// without any guarantees which result is going to be cached.
 ///
-/// Given it's used for DNS lookups this trade-off seems to be reasonable.
+/// Given it's used for DNS look-ups this trade-off seems to be reasonable.
 #[derive(Clone)]
 pub struct SimpleCachingDnsResolver {
     // mostly reads, occasional writes
@@ -151,9 +151,9 @@ impl SimpleCachingDnsResolver {
         let addr = match map.get(target) {
             None => None,
             Some((cached, expiration)) => {
-                // expiration with gitter to avoid waves of expirations
-                let expiration_gitter = *expiration + thread_rng().gen_range(0..5_000);
-                if Instant::now().duration_since(self.start_time).as_millis() < expiration_gitter {
+                // expiration with jitter to avoid expiration "waves"
+                let expiration_jitter = *expiration + thread_rng().gen_range(0..5_000);
+                if Instant::now().duration_since(self.start_time).as_millis() < expiration_jitter {
                     Some(self.pick(cached))
                 } else {
                     None

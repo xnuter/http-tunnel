@@ -150,7 +150,7 @@ impl ProxyConfiguration {
             );
             ProxyMode::TCP(destination)
         } else {
-            unreachable!("Only http and https and tcp commands are supported");
+            unreachable!("Only http, https and tcp commands are supported");
         };
 
         let tunnel_config = match config {

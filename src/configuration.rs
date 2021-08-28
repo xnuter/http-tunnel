@@ -41,9 +41,9 @@ pub struct TunnelConfig {
 
 #[derive(Clone)]
 pub enum ProxyMode {
-    HTTP,
-    HTTPS(Identity),
-    TCP(String),
+    Http,
+    Https(Identity),
+    Tcp(String),
 }
 
 #[derive(Clone, Builder)]
@@ -121,7 +121,7 @@ impl ProxyConfiguration {
                 "Starting in HTTP mode: bind: {}, configuration: {:?}",
                 bind_address, config
             );
-            ProxyMode::HTTP
+            ProxyMode::Http
         } else if let Some(https) = matches.subcommand_matches("https") {
             let pkcs12_file = https
                 .value_of("PKCS12")
@@ -138,7 +138,7 @@ impl ProxyConfiguration {
                 bind_address,
                 config
             );
-            ProxyMode::HTTPS(identity)
+            ProxyMode::Https(identity)
         } else if let Some(tcp) = matches.subcommand_matches("tcp") {
             let destination = tcp
                 .value_of("DESTINATION")
@@ -148,7 +148,7 @@ impl ProxyConfiguration {
                 "Starting in TCP mode: destination: {}, configuration: {:?}",
                 destination, config
             );
-            ProxyMode::TCP(destination)
+            ProxyMode::Tcp(destination)
         } else {
             unreachable!("Only http, https and tcp commands are supported");
         };
@@ -179,7 +179,7 @@ impl ProxyConfiguration {
             e
         })?;
 
-        Identity::from_pkcs12(&identity, &password).map_err(|e| {
+        Identity::from_pkcs12(&identity, password).map_err(|e| {
             error!("Cannot process PKCS12 file {}: {}", filename, e);
             Error::from(ErrorKind::InvalidInput)
         })

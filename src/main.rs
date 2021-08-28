@@ -67,10 +67,10 @@ async fn main() -> io::Result<()> {
     );
 
     match &proxy_configuration.mode {
-        ProxyMode::HTTP => {
+        ProxyMode::Http => {
             serve_plain_text(proxy_configuration, &mut tcp_listener, dns_resolver).await?;
         }
-        ProxyMode::HTTPS(tls_identity) => {
+        ProxyMode::Https(tls_identity) => {
             let acceptor = native_tls::TlsAcceptor::new(tls_identity.clone()).map_err(|e| {
                 error!("Error setting up TLS {}", e);
                 Error::from(ErrorKind::InvalidInput)
@@ -86,7 +86,7 @@ async fn main() -> io::Result<()> {
             )
             .await?;
         }
-        ProxyMode::TCP(d) => {
+        ProxyMode::Tcp(d) => {
             let destination = d.clone();
             serve_tcp(
                 proxy_configuration,

@@ -6,7 +6,9 @@
 /// option. This file may not be copied, modified, or distributed
 /// except according to those terms.
 use crate::relay::{RelayPolicy, NO_BANDWIDTH_LIMIT, NO_TIMEOUT};
-use clap::clap_app;
+use clap::Args;
+use clap::Parser;
+use clap::Subcommand;
 use log::{error, info};
 use native_tls::Identity;
 use regex::Regex;
@@ -53,6 +55,56 @@ pub struct ProxyConfiguration {
     pub tunnel_config: TunnelConfig,
 }
 
+#[derive(Parser, Debug)]
+#[clap(author, version, about, long_about = None)]
+#[clap(propagate_version = true)]
+struct Cli {
+    /// Configuration file.
+    #[clap(long)]
+    config: Option<String>,
+    /// Bind address, e.g. 0.0.0.0:8443.
+    #[clap(long)]
+    bind: String,
+    #[clap(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    Http(HttpOptions),
+    Https(HttpsOptions),
+    Tcp(TcpOptions),
+}
+
+#[derive(Args, Debug)]
+#[clap(about = "Run the tunnel in HTTP mode", long_about = None)]
+#[clap(author, version, long_about = None)]
+#[clap(propagate_version = true)]
+struct HttpOptions {}
+
+#[derive(Args, Debug)]
+#[clap(about = "Run the tunnel in HTTPS mode", long_about = None)]
+#[clap(author, version, long_about = None)]
+#[clap(propagate_version = true)]
+struct HttpsOptions {
+    /// pkcs12 filename.
+    #[clap(long)]
+    pk: String,
+    /// Password for the pkcs12 file.
+    #[clap(long)]
+    password: String,
+}
+
+#[derive(Args, Debug)]
+#[clap(about = "Run the tunnel in TCP proxy mode", long_about = None)]
+#[clap(author, version, long_about = None)]
+#[clap(propagate_version = true)]
+struct TcpOptions {
+    /// Destination address, e.g. 10.0.0.2:8443.
+    #[clap(short, long)]
+    destination: String,
+}
+
 impl Default for TunnelConfig {
     fn default() -> Self {
         // by default no restrictions
@@ -84,78 +136,46 @@ impl ProxyConfiguration {
     /// In production more secure approaches should be used (at least encryption with regularly
     /// rotated keys, storing sensitive data on RAM disk only, etc.)
     pub fn from_command_line() -> io::Result<ProxyConfiguration> {
-        let matches = clap_app!(myapp =>
-            (name: "Simple HTTP(S) Tunnel")
-            (version: "0.1.0")
-            (author: "Eugene Retunsky")
-            (about: "A simple HTTP(S) tunnel")
-            (@arg CONFIG: --config +takes_value "Configuration file")
-            (@arg BIND: --bind +required +takes_value "Bind address, e.g. 0.0.0.0:8443")
-            (@subcommand http =>
-                (about: "Run the tunnel in HTTP mode")
-                (version: "0.1.0")
-            )
-            (@subcommand https =>
-                (about: "Run the tunnel in HTTPS mode")
-                (version: "0.1.0")
-                (@arg PKCS12: --pk +required +takes_value "pkcs12 filename")
-                (@arg PASSWORD: --password +required  +takes_value "Password for the pkcs12 file")
-            )
-            (@subcommand tcp =>
-                (about: "Run the tunnel in TCP proxy mode")
-                (version: "0.1.0")
-                (@arg DESTINATION: --destination -d +required +takes_value "Destination address, e.g. 10.0.0.2:8443")
-            )
-        )
-        .get_matches();
+        let cli: Cli = Cli::parse();
 
-        let config = matches.value_of("CONFIG");
+        let config = cli.config;
+        let bind_address = cli.bind;
 
-        let bind_address = matches
-            .value_of("BIND")
-            .expect("misconfiguration for bind")
-            .to_string();
+        let mode = match cli.command {
+            Commands::Http(_) => {
+                info!(
+                    "Starting in HTTP mode: bind: {}, configuration: {:?}",
+                    bind_address, config
+                );
+                ProxyMode::Http
+            }
+            Commands::Https(https) => {
+                let pkcs12_file = https.pk.as_str();
+                let password = https.password.as_str();
 
-        let mode = if matches.subcommand_matches("http").is_some() {
-            info!(
-                "Starting in HTTP mode: bind: {}, configuration: {:?}",
-                bind_address, config
-            );
-            ProxyMode::Http
-        } else if let Some(https) = matches.subcommand_matches("https") {
-            let pkcs12_file = https
-                .value_of("PKCS12")
-                .expect("misconfiguration for pkcs12");
-            let password = https
-                .value_of("PASSWORD")
-                .expect("misconfiguration for password");
-
-            let identity = ProxyConfiguration::tls_identity_from_file(pkcs12_file, password)?;
-            info!(
-                "Starting in HTTPS mode: pkcs12: {}, password: {}, bind: {}, configuration: {:?}",
-                pkcs12_file,
-                !password.is_empty(),
-                bind_address,
-                config
-            );
-            ProxyMode::Https(identity)
-        } else if let Some(tcp) = matches.subcommand_matches("tcp") {
-            let destination = tcp
-                .value_of("DESTINATION")
-                .expect("misconfiguration for destination")
-                .to_string();
-            info!(
-                "Starting in TCP mode: destination: {}, configuration: {:?}",
-                destination, config
-            );
-            ProxyMode::Tcp(destination)
-        } else {
-            unreachable!("Only http, https and tcp commands are supported");
+                let identity = ProxyConfiguration::tls_identity_from_file(pkcs12_file, password)?;
+                info!(
+                    "Starting in HTTPS mode: pkcs12: {}, password: {}, bind: {}, configuration: {:?}",
+                    pkcs12_file,
+                    !password.is_empty(),
+                    bind_address,
+                    config
+                );
+                ProxyMode::Https(identity)
+            }
+            Commands::Tcp(tcp) => {
+                let destination = tcp.destination;
+                info!(
+                    "Starting in TCP mode: destination: {}, configuration: {:?}",
+                    destination, config
+                );
+                ProxyMode::Tcp(destination)
+            }
         };
 
         let tunnel_config = match config {
             None => TunnelConfig::default(),
-            Some(config) => ProxyConfiguration::read_tunnel_config(config)?,
+            Some(config) => ProxyConfiguration::read_tunnel_config(config.as_str())?,
         };
 
         Ok(ProxyConfigurationBuilder::default()

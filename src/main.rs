@@ -312,9 +312,7 @@ fn init_logger() {
     let logger_configuration = "./config/log4rs.yaml";
     if let Err(e) = log4rs::init_file(logger_configuration, Default::default()) {
         println!(
-            "Cannot initialize logger from {}, error=[{}]. Logging to the console.",
-            logger_configuration, e
-        );
+            "Cannot initialize logger from {logger_configuration}, error=[{e}]. Logging to the console.");
         let config = Config::builder()
             .appender(
                 Appender::builder()

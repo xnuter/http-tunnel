@@ -197,8 +197,7 @@ impl RelayPolicy {
             return Ok(());
         }
         let elapsed = Instant::now().duration_since(*start);
-        if elapsed.as_secs_f32() > 5.
-            && total_bytes as u64 / elapsed.as_secs() as u64 > self.max_rate_bps
+        if elapsed.as_secs_f32() > 5. && total_bytes as u64 / elapsed.as_secs() > self.max_rate_bps
         {
             // prevent bandwidth abuse
             Err(RelayShutdownReasons::TooFast)

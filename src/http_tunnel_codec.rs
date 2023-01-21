@@ -534,8 +534,7 @@ mod tests {
             assert_eq!(
                 result,
                 Err(EstablishTunnelResult::BadRequest),
-                "Didn't reject {}",
-                r
+                "Didn't reject {r}"
             );
         });
     }
@@ -576,7 +575,7 @@ mod tests {
 
             let str = String::from_utf8(Vec::from(&buffer[..])).expect("Must be valid ASCII");
 
-            assert!(pattern.is_match(&str), "Malformed response `{:?}`", code);
+            assert!(pattern.is_match(&str), "Malformed response `{code:?}`");
         }
     }
 

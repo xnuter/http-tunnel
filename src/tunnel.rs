@@ -762,7 +762,7 @@ mod test {
     }
 
     fn build_config(default_timeout: Duration) -> TunnelConfig {
-        let config = TunnelConfig {
+        TunnelConfig {
             client_connection: ClientConnectionConfig {
                 initiation_timeout: default_timeout,
                 relay_policy: RelayPolicy {
@@ -781,8 +781,7 @@ mod test {
                     max_rate_bps: 170310180,
                 },
             },
-        };
-        config
+        }
     }
 
     struct MockTargetConnector {

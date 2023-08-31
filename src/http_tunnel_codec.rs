@@ -520,7 +520,7 @@ mod tests {
         let bad_requests = [
             "bad request\r\n\r\n",                       // 2 tokens
             "yet another bad request\r\n\r\n",           // 4 tokens
-            "CONNECT foo.bar.cøm:443 HTTP/1.1\r\n\r\n", // non-ascii
+            "CONNECT foo.bar.cøm:443 HTTP/1.1\r\n\r\n",  // non-ascii
             "CONNECT  foo.bar.com:443 HTTP/1.1\r\n\r\n", // double-space
             "CONNECT foo.bar.com:443\tHTTP/1.1\r\n\r\n", // CTL
         ];

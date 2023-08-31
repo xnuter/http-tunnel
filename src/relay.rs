@@ -34,7 +34,7 @@ pub enum RelayShutdownReasons {
 /// Relays traffic from one stream to another in a single direction.
 /// To relay two sockets in full-duplex mode you need to create two `Relays` in both directions.
 /// It doesn't really matter what is the protocol, as it only requires `AsyncReadExt`
-/// and `AsyncWriteExt` traits from the source and the target.  
+/// and `AsyncWriteExt` traits from the source and the target.
 #[derive(Builder, Clone)]
 pub struct Relay {
     name: &'static str,
@@ -100,7 +100,7 @@ impl Relay {
             }
 
             let n = match read_result.unwrap() {
-                Ok(n) if n == 0 => {
+                Ok(0) => {
                     shutdown_reason = RelayShutdownReasons::GracefulShutdown;
                     break;
                 }

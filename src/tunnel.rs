@@ -24,9 +24,9 @@ use std::time::Duration;
 #[derive(Eq, PartialEq, Debug, Clone, Serialize)]
 #[allow(dead_code)]
 pub enum EstablishTunnelResult {
-    /// Successfully connected to target.  
+    /// Successfully connected to target.
     Ok,
-    /// Successfully connected to target but has a nugget to send after connection establishment.  
+    /// Successfully connected to target but has a nugget to send after connection establishment.
     OkWithNugget,
     /// Malformed request
     BadRequest,
@@ -214,7 +214,7 @@ where
                    configuration.client_connection.initiation_timeout,
                    self.tunnel_ctx);
             response = EstablishTunnelResult::RequestTimeout;
-        } else if let Some(event) = connect_request.unwrap() {
+        } else if let Ok(Some(event)) = connect_request {
             match event {
                 Ok(decoded_target) => {
                     let has_nugget = decoded_target.has_nugget();
@@ -260,13 +260,13 @@ where
         let timed_connection_result =
             timeout(connect_timeout, self.target_connector.connect(&target)).await;
 
-        if timed_connection_result.is_err() {
-            Err(EstablishTunnelResult::GatewayTimeout)
-        } else {
-            match timed_connection_result.unwrap() {
+        if let Ok(timed_connection_result) = timed_connection_result {
+            match timed_connection_result {
                 Ok(tcp_stream) => Ok(tcp_stream),
                 Err(e) => Err(EstablishTunnelResult::from(e)),
             }
+        } else {
+            Err(EstablishTunnelResult::GatewayTimeout)
         }
     }
 }

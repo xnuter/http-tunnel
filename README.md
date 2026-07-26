@@ -8,7 +8,7 @@
 An implementation of [HTTP Tunnel](https://en.wikipedia.org/wiki/HTTP_tunnel) in Rust, which can also function as a TCP proxy.
 
 The core code is entirely abstract from the tunnel protocol or transport protocols.
-In this example, it supports both `HTTP` and `HTTPS` with minimal additional code.
+It supports `HTTP`, `HTTPS`, and `QUIC` (HTTP/3) transports with minimal additional code.
 
 *Please note*, this tunnel doesn't allow tunneling of plain text over HTTP tunnels (only HTTPS connections can be tunneled).
 If you need this functionality you need to build the `http-tunnel` with the `plain_text` feature:
@@ -17,7 +17,13 @@ If you need this functionality you need to build the `http-tunnel` with the `pla
 cargo build --release --features plain_text
 ```
 
-E.g. it can be extended to run the tunnel over `QUIC+HTTP/3` or connect to another tunnel (as long as `AsyncRead + AsyncWrite` is satisfied for the implementation).
+To enable QUIC transport, build with the `quic` feature:
+
+```bash
+cargo build --release --features quic
+```
+
+The architecture is fully extensible — any transport satisfying `AsyncRead + AsyncWrite` can be plugged in.
 
 You can check [benchmarks](https://github.com/xnuter/perf-gauge/wiki/Benchmarking-TCP-Proxies-written-in-different-languages:-C,-CPP,-Rust,-Golang,-Java,-Python).
 
@@ -36,9 +42,12 @@ You can check [benchmarks](https://github.com/xnuter/perf-gauge/wiki/Benchmarkin
   * a tunnel handshake codec (e.g. `HttpTunnelCodec`)
   * a target connector
   * client connection as a stream
-* `main.rs` - application. May start `HTTP` or `HTTPS` tunnel (based on the command line parameters).
+* `quic.rs` - QUIC transport adapter (behind `--features quic`)
+  * `QuicBiStream` — combines quinn's `SendStream` + `RecvStream` into `AsyncRead + AsyncWrite`
+  * `build_quic_server_config()` — loads PEM certificates for QUIC/TLS 1.3
+* `main.rs` - application. May start `HTTP`, `HTTPS`, `TCP`, or `QUIC` tunnel (based on the command line parameters).
   * emits log to `logs/application.log` (`log/` contains the actual output of the app from the browser session)
-  * metrics to `logs/metrics.log` - very basic, to demonstrate the concept.`
+  * metrics to `logs/metrics.log` - very basic, to demonstrate the concept.
           
 ### Run demo
 
@@ -54,7 +63,7 @@ Now you can start it without any configuration:
 $ http-tunnel --bind 0.0.0.0:8080 http
 ```
 
-There are three modes.
+There are four modes.
 
 * `HTTPS`:
 ```
@@ -71,6 +80,13 @@ $ http-tunnel --config ./config/config-browser.yaml --bind 0.0.0.0:8080 http
 * `TCP Proxy`:
 ```
 $ http-tunnel --config ./config/config-browser.yaml --bind 0.0.0.0:8080 tcp --destination $REMOTE_HOST:$REMOTE_PORT
+```
+
+* `QUIC` (HTTP/3, requires `--features quic`):
+```
+$ http-tunnel --config ./config/config.yaml \
+              --bind 0.0.0.0:8443 \
+              quic --cert ./config/fullchain.pem --key ./config/privkey.pem
 ```
 
 ### Testing with a browser (HTTP)
@@ -101,6 +117,37 @@ curl -vp --proxy https://simple.rust-http-tunnel.org:8443  --proxy-cacert ./conf
 ``` 
 
 You can also play around with targets that are not allowed.
+
+### Testing QUIC mode
+
+First, generate a self-signed X.509v3 certificate (QUIC requires TLS 1.3 with v3 certs):
+
+```bash
+openssl req -x509 -newkey rsa:2048 \
+    -keyout ./config/quic-domain.key -out ./config/quic-domain.crt \
+    -days 365 -nodes -subj "/CN=localhost" \
+    -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+```
+
+Start the QUIC tunnel:
+
+```bash
+cargo run --features quic -- \
+    --config ./config/config.yaml \
+    --bind 0.0.0.0:8443 \
+    quic --cert ./config/quic-domain.crt --key ./config/quic-domain.key
+```
+
+You can test with any QUIC-capable HTTP client. For example, using `curl` with HTTP/3 support:
+
+```bash
+curl --http3 -vp --proxy-insecure \
+    --proxy https://localhost:8443 \
+    https://www.wikipedia.org
+```
+
+> **Note:** The existing `config/domain.crt` is X.509v1 and is not compatible with QUIC/rustls.
+> Use the generated `quic-domain.crt`/`quic-domain.key` or your own v3 certificates.
 
 ### Privacy
 

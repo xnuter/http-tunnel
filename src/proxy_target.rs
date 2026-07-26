@@ -7,6 +7,7 @@
 /// except according to those terms.
 use crate::tunnel::{TunnelCtx, TunnelTarget};
 use async_trait::async_trait;
+use derive_builder::Builder;
 use log::{debug, error, info};
 use rand::prelude::thread_rng;
 use rand::Rng;

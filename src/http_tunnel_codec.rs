@@ -9,6 +9,7 @@ use std::fmt::Write;
 
 use async_trait::async_trait;
 use bytes::BytesMut;
+use derive_builder::Builder;
 use log::debug;
 use regex::Regex;
 use tokio::io::{Error, ErrorKind};

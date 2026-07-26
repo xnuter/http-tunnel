@@ -1,15 +1,10 @@
-/// Copyright 2020 Developers of the http-tunnel project.
-///
-/// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-/// https://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-/// <LICENSE-MIT or https://opensource.org/licenses/MIT>, at your
-/// option. This file may not be copied, modified, or distributed
-/// except according to those terms.
-
-#[macro_use]
-extern crate derive_builder;
-#[macro_use]
-extern crate serde_derive;
+// Copyright 2020 Developers of the http-tunnel project.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// https://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or https://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
 
 use log::{error, info, LevelFilter};
 use rand::{thread_rng, Rng};
@@ -33,6 +28,8 @@ use tokio::io::{AsyncRead, AsyncWrite};
 mod configuration;
 mod http_tunnel_codec;
 mod proxy_target;
+#[cfg(feature = "quic")]
+mod quic;
 mod relay;
 mod tunnel;
 
@@ -42,9 +39,8 @@ type DnsResolver = SimpleCachingDnsResolver;
 async fn main() -> io::Result<()> {
     init_logger();
 
-    let proxy_configuration = ProxyConfiguration::from_command_line().map_err(|e| {
+    let proxy_configuration = ProxyConfiguration::from_command_line().inspect_err(|_e| {
         println!("Failed to process parameters. See ./log/application.log for details");
-        e
     })?;
 
     info!("Starting listener on: {}", proxy_configuration.bind_address);
@@ -56,12 +52,12 @@ async fn main() -> io::Result<()> {
             .dns_cache_ttl,
     );
 
-    match &proxy_configuration.mode {
+    match proxy_configuration.mode.clone() {
         ProxyMode::Http => {
             serve_plain_text(proxy_configuration, dns_resolver).await?;
         }
         ProxyMode::Https(tls_identity) => {
-            let acceptor = native_tls::TlsAcceptor::new(tls_identity.clone()).map_err(|e| {
+            let acceptor = native_tls::TlsAcceptor::new(tls_identity).map_err(|e| {
                 error!("Error setting up TLS {}", e);
                 Error::from(ErrorKind::InvalidInput)
             })?;
@@ -70,9 +66,12 @@ async fn main() -> io::Result<()> {
 
             serve_tls(proxy_configuration, tls_acceptor, dns_resolver).await?;
         }
-        ProxyMode::Tcp(d) => {
-            let destination = d.clone();
+        ProxyMode::Tcp(destination) => {
             serve_tcp(proxy_configuration, dns_resolver, destination).await?;
+        }
+        #[cfg(feature = "quic")]
+        ProxyMode::Quic(quic_tls) => {
+            serve_quic(proxy_configuration, quic_tls, dns_resolver).await?;
         }
     };
 
@@ -285,6 +284,97 @@ async fn tunnel_stream<C: AsyncRead + AsyncWrite + Send + Unpin + 'static>(
     report_tunnel_metrics(ctx, stats);
 
     Ok(())
+}
+
+/// Serve QUIC connections.
+/// Each QUIC connection can carry multiple bidirectional streams.
+/// Each bidirectional stream is treated as an independent tunnel session.
+#[cfg(feature = "quic")]
+async fn serve_quic(
+    config: ProxyConfiguration,
+    quic_tls: configuration::QuicTlsConfig,
+    dns_resolver: DnsResolver,
+) -> io::Result<()> {
+    use std::net::SocketAddr;
+
+    let server_config = quic::build_quic_server_config(&quic_tls.cert_path, &quic_tls.key_path)?;
+
+    let bind_addr: SocketAddr = config.bind_address.parse().map_err(|e| {
+        error!("Invalid bind address '{}': {}", config.bind_address, e);
+        Error::from(ErrorKind::InvalidInput)
+    })?;
+
+    let endpoint = quinn::Endpoint::server(server_config, bind_addr).map_err(|e| {
+        error!("Error creating QUIC endpoint on {}: {}", bind_addr, e);
+        Error::from(ErrorKind::AddrInUse)
+    })?;
+
+    info!("QUIC endpoint listening on: {}", bind_addr);
+
+    while let Some(incoming) = endpoint.accept().await {
+        let config = config.clone();
+        let dns_resolver = dns_resolver.clone();
+
+        tokio::spawn(async move {
+            match incoming.await {
+                Ok(connection) => {
+                    info!(
+                        "QUIC connection established from: {}",
+                        connection.remote_address()
+                    );
+                    handle_quic_connection(config, connection, dns_resolver).await;
+                }
+                Err(e) => {
+                    error!("QUIC connection failed: {}", e);
+                }
+            }
+        });
+    }
+
+    Ok(())
+}
+
+/// Handle a single QUIC connection by accepting bidirectional streams.
+/// Each stream is tunneled independently via `tunnel_stream`.
+#[cfg(feature = "quic")]
+async fn handle_quic_connection(
+    config: ProxyConfiguration,
+    connection: quinn::Connection,
+    dns_resolver: DnsResolver,
+) {
+    loop {
+        match connection.accept_bi().await {
+            Ok((send, recv)) => {
+                let stream = quic::QuicBiStream::new(send, recv);
+                let config = config.clone();
+                let dns_resolver = dns_resolver.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = tunnel_stream(&config, stream, dns_resolver).await {
+                        error!("QUIC tunnel stream error: {}", e);
+                    }
+                });
+            }
+            Err(e) => {
+                // Connection closed or error — stop accepting streams
+                match e {
+                    quinn::ConnectionError::ApplicationClosed(_) => {
+                        info!(
+                            "QUIC connection closed by peer: {}",
+                            connection.remote_address()
+                        );
+                    }
+                    _ => {
+                        error!(
+                            "Error accepting QUIC bidirectional stream from {}: {}",
+                            connection.remote_address(),
+                            e
+                        );
+                    }
+                }
+                break;
+            }
+        }
+    }
 }
 
 /// Placeholder for proper metrics emission.

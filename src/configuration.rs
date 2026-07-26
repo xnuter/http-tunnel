@@ -9,9 +9,11 @@ use crate::relay::{RelayPolicy, NO_BANDWIDTH_LIMIT, NO_TIMEOUT};
 use clap::Args;
 use clap::Parser;
 use clap::Subcommand;
+use derive_builder::Builder;
 use log::{error, info};
 use native_tls::Identity;
 use regex::Regex;
+use serde::Deserialize;
 use std::fs::File;
 use std::io::{Error, ErrorKind, Read};
 use std::time::Duration;
@@ -46,6 +48,17 @@ pub enum ProxyMode {
     Http,
     Https(Identity),
     Tcp(String),
+    #[cfg(feature = "quic")]
+    Quic(QuicTlsConfig),
+}
+
+/// TLS configuration for QUIC transport.
+/// QUIC mandates TLS 1.3, using PEM-encoded certificate and key files.
+#[cfg(feature = "quic")]
+#[derive(Clone)]
+pub struct QuicTlsConfig {
+    pub cert_path: String,
+    pub key_path: String,
 }
 
 #[derive(Clone, Builder)]
@@ -74,6 +87,8 @@ enum Commands {
     Http(HttpOptions),
     Https(HttpsOptions),
     Tcp(TcpOptions),
+    #[cfg(feature = "quic")]
+    Quic(QuicOptions),
 }
 
 #[derive(Args, Debug)]
@@ -103,6 +118,20 @@ struct TcpOptions {
     /// Destination address, e.g. 10.0.0.2:8443.
     #[clap(short, long)]
     destination: String,
+}
+
+#[cfg(feature = "quic")]
+#[derive(Args, Debug)]
+#[clap(about = "Run the tunnel in QUIC (HTTP/3) mode", long_about = None)]
+#[clap(author, version, long_about = None)]
+#[clap(propagate_version = true)]
+struct QuicOptions {
+    /// PEM-encoded certificate file (full chain).
+    #[clap(long)]
+    cert: String,
+    /// PEM-encoded private key file.
+    #[clap(long)]
+    key: String,
 }
 
 impl Default for TunnelConfig {
@@ -171,6 +200,17 @@ impl ProxyConfiguration {
                 );
                 ProxyMode::Tcp(destination)
             }
+            #[cfg(feature = "quic")]
+            Commands::Quic(quic) => {
+                info!(
+                    "Starting in QUIC mode: cert: {}, key: {}, bind: {}, configuration: {:?}",
+                    quic.cert, quic.key, bind_address, config
+                );
+                ProxyMode::Quic(QuicTlsConfig {
+                    cert_path: quic.cert,
+                    key_path: quic.key,
+                })
+            }
         };
 
         let tunnel_config = match config {
@@ -218,7 +258,7 @@ impl ProxyConfiguration {
             e
         })?;
 
-        let result: TunnelConfig = serde_yaml::from_slice(&yaml).map_err(|e| {
+        let result: TunnelConfig = serde_yml::from_slice(&yaml).map_err(|e| {
             error!("Error parsing yaml {}: {}", filename, e);
             Error::from(ErrorKind::InvalidInput)
         })?;

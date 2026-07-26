@@ -6,8 +6,10 @@
 /// option. This file may not be copied, modified, or distributed
 /// except according to those terms.
 use async_trait::async_trait;
+use derive_builder::Builder;
 use futures::{SinkExt, StreamExt};
 use log::{debug, error};
+use serde::Serialize;
 use tokio::io;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::time::timeout;
@@ -50,11 +52,11 @@ pub enum EstablishTunnelResult {
 ///
 /// # Parameters
 /// * `<H>` - proxy handshake codec for initiating a tunnel.
-///    It extracts the request message, which contains the target, and, potentially policies.
-///    It also takes care of encoding a response.
+///   It extracts the request message, which contains the target, and, potentially policies.
+///   It also takes care of encoding a response.
 /// * `<C>` - a connection from from client.
 /// * `<T>` - target connector. It takes result produced by the codec and establishes a connection
-///           to a target.
+///   to a target.
 ///
 /// Once the target connection is established, it relays data until any connection is closed or an
 /// error happens.

@@ -310,12 +310,21 @@ fn build_quic_client_config(insecure: bool) -> io::Result<quinn::ClientConfig> {
             .with_no_client_auth()
     };
 
-    let client_config = quinn::ClientConfig::new(Arc::new(
+    let mut client_config = quinn::ClientConfig::new(Arc::new(
         quinn::crypto::rustls::QuicClientConfig::try_from(crypto).map_err(|e| {
             error!("Error creating QUIC client config: {}", e);
             io::Error::new(io::ErrorKind::InvalidInput, e.to_string())
         })?,
     ));
+
+    // Keep the connection alive - send QUIC PING frames every 5 seconds
+    // and set a generous idle timeout (5 minutes)
+    let mut transport = quinn::TransportConfig::default();
+    transport.keep_alive_interval(Some(Duration::from_secs(5)));
+    transport.max_idle_timeout(Some(
+        quinn::IdleTimeout::try_from(Duration::from_secs(300)).unwrap(),
+    ));
+    client_config.transport_config(Arc::new(transport));
 
     Ok(client_config)
 }

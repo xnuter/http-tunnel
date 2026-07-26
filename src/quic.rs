@@ -129,7 +129,14 @@ pub fn build_quic_server_config(
         Error::new(ErrorKind::InvalidInput, e.to_string())
     })?;
 
-    let server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
+    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
+
+    // Set generous idle timeout to match client keep-alive
+    let mut transport = quinn::TransportConfig::default();
+    transport.max_idle_timeout(Some(
+        quinn::IdleTimeout::try_from(std::time::Duration::from_secs(300)).unwrap(),
+    ));
+    server_config.transport_config(Arc::new(transport));
 
     Ok(server_config)
 }

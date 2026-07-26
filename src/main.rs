@@ -32,6 +32,8 @@ mod proxy_target;
 mod quic;
 #[cfg(feature = "tun-vpn")]
 mod quic_tun;
+#[cfg(feature = "tun-vpn")]
+mod tls_tun;
 mod relay;
 mod tunnel;
 
@@ -99,6 +101,38 @@ async fn main() -> io::Result<()> {
                 std::io::Error::from(std::io::ErrorKind::InvalidInput)
             })?;
             quic_tun::run_tun_client(
+                server_addr,
+                &tun_config.tun_name,
+                tun_config.tun_addr,
+                tun_config.tun_netmask,
+                tun_config.insecure,
+            )
+            .await?;
+        }
+        #[cfg(feature = "tun-vpn")]
+        ProxyMode::TlsTunServer(tun_config) => {
+            use std::net::SocketAddr;
+            let bind_addr: SocketAddr = proxy_configuration.bind_address.parse().map_err(|e| {
+                error!("Invalid bind address '{}': {}", proxy_configuration.bind_address, e);
+                std::io::Error::from(std::io::ErrorKind::InvalidInput)
+            })?;
+            tls_tun::run_tls_tun_server(
+                bind_addr,
+                &tun_config.cert_path,
+                &tun_config.key_path,
+                tun_config.tun_addr,
+                tun_config.tun_netmask,
+            )
+            .await?;
+        }
+        #[cfg(feature = "tun-vpn")]
+        ProxyMode::TlsTunClient(tun_config) => {
+            use std::net::SocketAddr;
+            let server_addr: SocketAddr = tun_config.server_addr.parse().map_err(|e| {
+                error!("Invalid server address '{}': {}", tun_config.server_addr, e);
+                std::io::Error::from(std::io::ErrorKind::InvalidInput)
+            })?;
+            tls_tun::run_tls_tun_client(
                 server_addr,
                 &tun_config.tun_name,
                 tun_config.tun_addr,

@@ -54,6 +54,10 @@ pub enum ProxyMode {
     TunServer(TunServerConfig),
     #[cfg(feature = "tun-vpn")]
     TunClient(TunClientConfig),
+    #[cfg(feature = "tun-vpn")]
+    TlsTunServer(TunServerConfig),
+    #[cfg(feature = "tun-vpn")]
+    TlsTunClient(TunClientConfig),
 }
 
 /// TLS configuration for QUIC transport.
@@ -118,6 +122,10 @@ enum Commands {
     TunServer(TunServerOptions),
     #[cfg(feature = "tun-vpn")]
     TunClient(TunClientOptions),
+    #[cfg(feature = "tun-vpn")]
+    TlsTunServer(TlsTunServerOptions),
+    #[cfg(feature = "tun-vpn")]
+    TlsTunClient(TlsTunClientOptions),
 }
 
 #[derive(Args, Debug)]
@@ -190,6 +198,45 @@ struct TunClientOptions {
     server: String,
     /// TUN device name (e.g. quic1).
     #[clap(long, default_value = "quic1")]
+    tun_name: String,
+    /// TUN device IP address (e.g. 10.9.0.2).
+    #[clap(long, default_value = "10.9.0.2")]
+    tun_addr: std::net::Ipv4Addr,
+    /// TUN device netmask (e.g. 255.255.255.0).
+    #[clap(long, default_value = "255.255.255.0")]
+    tun_netmask: std::net::Ipv4Addr,
+    /// Skip TLS certificate verification (for self-signed certs).
+    #[clap(long, default_value = "false")]
+    insecure: bool,
+}
+
+#[cfg(feature = "tun-vpn")]
+#[derive(Args, Debug)]
+#[clap(about = "Run as TUN-over-TLS (TCP) VPN server", long_about = None)]
+struct TlsTunServerOptions {
+    /// PEM-encoded certificate file.
+    #[clap(long)]
+    cert: String,
+    /// PEM-encoded private key file.
+    #[clap(long)]
+    key: String,
+    /// TUN device IP address (e.g. 10.9.0.1).
+    #[clap(long, default_value = "10.9.0.1")]
+    tun_addr: std::net::Ipv4Addr,
+    /// TUN device netmask (e.g. 255.255.255.0).
+    #[clap(long, default_value = "255.255.255.0")]
+    tun_netmask: std::net::Ipv4Addr,
+}
+
+#[cfg(feature = "tun-vpn")]
+#[derive(Args, Debug)]
+#[clap(about = "Run as TUN-over-TLS (TCP) VPN client", long_about = None)]
+struct TlsTunClientOptions {
+    /// TLS server address (e.g. 98.82.60.69:443).
+    #[clap(long)]
+    server: String,
+    /// TUN device name (e.g. tls1).
+    #[clap(long, default_value = "tls1")]
     tun_name: String,
     /// TUN device IP address (e.g. 10.9.0.2).
     #[clap(long, default_value = "10.9.0.2")]
@@ -299,6 +346,33 @@ impl ProxyConfiguration {
                     opts.server, opts.tun_name, opts.tun_addr, opts.tun_netmask, opts.insecure
                 );
                 ProxyMode::TunClient(TunClientConfig {
+                    server_addr: opts.server,
+                    tun_name: opts.tun_name,
+                    tun_addr: opts.tun_addr,
+                    tun_netmask: opts.tun_netmask,
+                    insecure: opts.insecure,
+                })
+            }
+            #[cfg(feature = "tun-vpn")]
+            Commands::TlsTunServer(opts) => {
+                info!(
+                    "Starting TLS TUN VPN server: cert: {}, key: {}, tun: {}/{}, bind: {}",
+                    opts.cert, opts.key, opts.tun_addr, opts.tun_netmask, bind_address
+                );
+                ProxyMode::TlsTunServer(TunServerConfig {
+                    cert_path: opts.cert,
+                    key_path: opts.key,
+                    tun_addr: opts.tun_addr,
+                    tun_netmask: opts.tun_netmask,
+                })
+            }
+            #[cfg(feature = "tun-vpn")]
+            Commands::TlsTunClient(opts) => {
+                info!(
+                    "Starting TLS TUN VPN client: server: {}, tun: {} ({}/{}), insecure: {}",
+                    opts.server, opts.tun_name, opts.tun_addr, opts.tun_netmask, opts.insecure
+                );
+                ProxyMode::TlsTunClient(TunClientConfig {
                     server_addr: opts.server,
                     tun_name: opts.tun_name,
                     tun_addr: opts.tun_addr,

@@ -50,6 +50,10 @@ pub enum ProxyMode {
     Tcp(String),
     #[cfg(feature = "quic")]
     Quic(QuicTlsConfig),
+    #[cfg(feature = "tun-vpn")]
+    TunServer(TunServerConfig),
+    #[cfg(feature = "tun-vpn")]
+    TunClient(TunClientConfig),
 }
 
 /// TLS configuration for QUIC transport.
@@ -59,6 +63,27 @@ pub enum ProxyMode {
 pub struct QuicTlsConfig {
     pub cert_path: String,
     pub key_path: String,
+}
+
+/// Configuration for TUN-over-QUIC VPN server.
+#[cfg(feature = "tun-vpn")]
+#[derive(Clone)]
+pub struct TunServerConfig {
+    pub cert_path: String,
+    pub key_path: String,
+    pub tun_addr: std::net::Ipv4Addr,
+    pub tun_netmask: std::net::Ipv4Addr,
+}
+
+/// Configuration for TUN-over-QUIC VPN client.
+#[cfg(feature = "tun-vpn")]
+#[derive(Clone)]
+pub struct TunClientConfig {
+    pub server_addr: String,
+    pub tun_name: String,
+    pub tun_addr: std::net::Ipv4Addr,
+    pub tun_netmask: std::net::Ipv4Addr,
+    pub insecure: bool,
 }
 
 #[derive(Clone, Builder)]
@@ -89,6 +114,10 @@ enum Commands {
     Tcp(TcpOptions),
     #[cfg(feature = "quic")]
     Quic(QuicOptions),
+    #[cfg(feature = "tun-vpn")]
+    TunServer(TunServerOptions),
+    #[cfg(feature = "tun-vpn")]
+    TunClient(TunClientOptions),
 }
 
 #[derive(Args, Debug)]
@@ -132,6 +161,45 @@ struct QuicOptions {
     /// PEM-encoded private key file.
     #[clap(long)]
     key: String,
+}
+
+#[cfg(feature = "tun-vpn")]
+#[derive(Args, Debug)]
+#[clap(about = "Run as TUN-over-QUIC VPN server", long_about = None)]
+struct TunServerOptions {
+    /// PEM-encoded certificate file.
+    #[clap(long)]
+    cert: String,
+    /// PEM-encoded private key file.
+    #[clap(long)]
+    key: String,
+    /// TUN device IP address (e.g. 10.9.0.1).
+    #[clap(long, default_value = "10.9.0.1")]
+    tun_addr: std::net::Ipv4Addr,
+    /// TUN device netmask (e.g. 255.255.255.0).
+    #[clap(long, default_value = "255.255.255.0")]
+    tun_netmask: std::net::Ipv4Addr,
+}
+
+#[cfg(feature = "tun-vpn")]
+#[derive(Args, Debug)]
+#[clap(about = "Run as TUN-over-QUIC VPN client", long_about = None)]
+struct TunClientOptions {
+    /// QUIC server address (e.g. 98.82.60.69:443).
+    #[clap(long)]
+    server: String,
+    /// TUN device name (e.g. quic1).
+    #[clap(long, default_value = "quic1")]
+    tun_name: String,
+    /// TUN device IP address (e.g. 10.9.0.2).
+    #[clap(long, default_value = "10.9.0.2")]
+    tun_addr: std::net::Ipv4Addr,
+    /// TUN device netmask (e.g. 255.255.255.0).
+    #[clap(long, default_value = "255.255.255.0")]
+    tun_netmask: std::net::Ipv4Addr,
+    /// Skip TLS certificate verification (for self-signed certs).
+    #[clap(long, default_value = "false")]
+    insecure: bool,
 }
 
 impl Default for TunnelConfig {
@@ -209,6 +277,33 @@ impl ProxyConfiguration {
                 ProxyMode::Quic(QuicTlsConfig {
                     cert_path: quic.cert,
                     key_path: quic.key,
+                })
+            }
+            #[cfg(feature = "tun-vpn")]
+            Commands::TunServer(opts) => {
+                info!(
+                    "Starting TUN VPN server: cert: {}, key: {}, tun: {}/{}, bind: {}",
+                    opts.cert, opts.key, opts.tun_addr, opts.tun_netmask, bind_address
+                );
+                ProxyMode::TunServer(TunServerConfig {
+                    cert_path: opts.cert,
+                    key_path: opts.key,
+                    tun_addr: opts.tun_addr,
+                    tun_netmask: opts.tun_netmask,
+                })
+            }
+            #[cfg(feature = "tun-vpn")]
+            Commands::TunClient(opts) => {
+                info!(
+                    "Starting TUN VPN client: server: {}, tun: {} ({}/{}), insecure: {}",
+                    opts.server, opts.tun_name, opts.tun_addr, opts.tun_netmask, opts.insecure
+                );
+                ProxyMode::TunClient(TunClientConfig {
+                    server_addr: opts.server,
+                    tun_name: opts.tun_name,
+                    tun_addr: opts.tun_addr,
+                    tun_netmask: opts.tun_netmask,
+                    insecure: opts.insecure,
                 })
             }
         };

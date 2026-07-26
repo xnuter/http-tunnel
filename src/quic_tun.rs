@@ -75,12 +75,20 @@ pub async fn run_tun_server(
         io::Error::new(io::ErrorKind::Other, e)
     })?;
 
-    let tun = Arc::new(tokio::sync::Mutex::new(tun_dev));
-
     info!("TUN device created with address {}/{}", tun_addr, tun_netmask);
 
+    // Split TUN into independent reader and writer
+    let (tun_writer, tun_reader) = tun_dev.split().map_err(|e| {
+        error!("Error splitting TUN device: {}", e);
+        io::Error::new(io::ErrorKind::Other, e)
+    })?;
+
+    let tun_reader = Arc::new(tokio::sync::Mutex::new(tun_reader));
+    let tun_writer = Arc::new(tokio::sync::Mutex::new(tun_writer));
+
     while let Some(incoming) = endpoint.accept().await {
-        let tun = tun.clone();
+        let reader = tun_reader.clone();
+        let writer = tun_writer.clone();
 
         tokio::spawn(async move {
             match incoming.await {
@@ -89,7 +97,7 @@ pub async fn run_tun_server(
                         "QUIC TUN connection from: {}",
                         connection.remote_address()
                     );
-                    if let Err(e) = handle_tun_server_connection(connection, tun).await {
+                    if let Err(e) = handle_tun_server_connection(connection, reader, writer).await {
                         error!("TUN connection error: {}", e);
                     }
                 }
@@ -135,9 +143,16 @@ pub async fn run_tun_client(
         io::Error::new(io::ErrorKind::Other, e)
     })?;
 
-    let tun = Arc::new(tokio::sync::Mutex::new(tun_dev));
-
     info!("TUN device '{}' created with address {}/{}", tun_name, tun_addr, tun_netmask);
+
+    // Split TUN into independent reader and writer
+    let (tun_writer, tun_reader) = tun_dev.split().map_err(|e| {
+        error!("Error splitting TUN device: {}", e);
+        io::Error::new(io::ErrorKind::Other, e)
+    })?;
+
+    let tun_reader = Arc::new(tokio::sync::Mutex::new(tun_reader));
+    let tun_writer = Arc::new(tokio::sync::Mutex::new(tun_writer));
 
     // Client QUIC config
     let client_config = build_quic_client_config(insecure)?;
@@ -159,7 +174,7 @@ pub async fn run_tun_client(
 
             info!("Connected to QUIC server {}", server_addr);
 
-            handle_tun_client_connection(connection, tun.clone()).await
+            handle_tun_client_connection(connection, tun_reader.clone(), tun_writer.clone()).await
         }
         .await;
 
@@ -180,7 +195,8 @@ pub async fn run_tun_client(
 /// Accepts a bi-stream opened by the client and relays IP packets in both directions.
 async fn handle_tun_server_connection(
     connection: quinn::Connection,
-    tun: Arc<tokio::sync::Mutex<tun2::AsyncDevice>>,
+    tun_reader: Arc<tokio::sync::Mutex<tun2::DeviceReader>>,
+    tun_writer: Arc<tokio::sync::Mutex<tun2::DeviceWriter>>,
 ) -> io::Result<()> {
     let (send, recv) = connection
         .accept_bi()
@@ -189,14 +205,15 @@ async fn handle_tun_server_connection(
 
     info!("Bi-stream accepted, starting IP packet relay");
 
-    relay_tun_quic(tun, send, recv).await
+    relay_tun_quic(tun_reader, tun_writer, send, recv).await
 }
 
 /// Handle a single TUN-over-QUIC connection on the client side.
 /// Opens a bi-stream to the server and relays IP packets in both directions.
 async fn handle_tun_client_connection(
     connection: quinn::Connection,
-    tun: Arc<tokio::sync::Mutex<tun2::AsyncDevice>>,
+    tun_reader: Arc<tokio::sync::Mutex<tun2::DeviceReader>>,
+    tun_writer: Arc<tokio::sync::Mutex<tun2::DeviceWriter>>,
 ) -> io::Result<()> {
     let (send, recv) = connection
         .open_bi()
@@ -205,24 +222,23 @@ async fn handle_tun_client_connection(
 
     info!("Bi-stream opened, starting IP packet relay");
 
-    relay_tun_quic(tun, send, recv).await
+    relay_tun_quic(tun_reader, tun_writer, send, recv).await
 }
 
 /// Bidirectional relay between TUN device and QUIC bi-stream.
+/// Uses separate reader/writer halves to avoid mutex contention.
 async fn relay_tun_quic(
-    tun: Arc<tokio::sync::Mutex<tun2::AsyncDevice>>,
+    tun_reader: Arc<tokio::sync::Mutex<tun2::DeviceReader>>,
+    tun_writer: Arc<tokio::sync::Mutex<tun2::DeviceWriter>>,
     send: quinn::SendStream,
     recv: quinn::RecvStream,
 ) -> io::Result<()> {
-    let tun_read = tun.clone();
-    let tun_write = tun;
-
     let send_task = tokio::spawn(async move {
-        tun_to_quic(tun_read, send).await
+        tun_to_quic(tun_reader, send).await
     });
 
     let recv_task = tokio::spawn(async move {
-        quic_to_tun(recv, tun_write).await
+        quic_to_tun(recv, tun_writer).await
     });
 
     // Wait for either direction to finish (connection closed/error)
@@ -245,15 +261,15 @@ async fn relay_tun_quic(
 /// Relay IP packets from TUN device to QUIC send stream.
 /// Framing: [u16 big-endian length][IP packet bytes]
 async fn tun_to_quic(
-    tun: Arc<tokio::sync::Mutex<tun2::AsyncDevice>>,
+    tun_reader: Arc<tokio::sync::Mutex<tun2::DeviceReader>>,
     mut send: quinn::SendStream,
 ) -> io::Result<()> {
     let mut buf = vec![0u8; BUF_SIZE];
 
     loop {
         let n = {
-            let mut tun = tun.lock().await;
-            tun.read(&mut buf).await?
+            let mut reader = tun_reader.lock().await;
+            reader.read(&mut buf).await?
         };
 
         if n == 0 {
@@ -275,7 +291,7 @@ async fn tun_to_quic(
 /// Reads framed packets: [u16 big-endian length][IP packet bytes]
 async fn quic_to_tun(
     mut recv: quinn::RecvStream,
-    tun: Arc<tokio::sync::Mutex<tun2::AsyncDevice>>,
+    tun_writer: Arc<tokio::sync::Mutex<tun2::DeviceWriter>>,
 ) -> io::Result<()> {
     let mut len_buf = [0u8; 2];
     let mut pkt_buf = vec![0u8; BUF_SIZE];
@@ -302,8 +318,8 @@ async fn quic_to_tun(
             .map_err(|e| io::Error::new(io::ErrorKind::UnexpectedEof, e))?;
 
         // Write to TUN
-        let mut tun = tun.lock().await;
-        tun.write_all(&pkt_buf[..pkt_len]).await?;
+        let mut writer = tun_writer.lock().await;
+        writer.write_all(&pkt_buf[..pkt_len]).await?;
     }
 }
 

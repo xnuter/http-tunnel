@@ -4,59 +4,49 @@ name: Code coverage with grcov
 
 jobs:
   grcov:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os:
-          - ubuntu-latest
+    runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
-      - name: Install toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: nightly
-          override: true
-          profile: minimal
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Execute tests
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --features plain_text
+      - name: Install grcov
+        run: cargo install grcov
+
+      - name: Execute tests with coverage instrumentation
+        run: cargo test --features plain_text
         env:
           CARGO_INCREMENTAL: 0
-          RUSTFLAGS: "-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests"
+          RUSTFLAGS: "-Cinstrument-coverage"
+          LLVM_PROFILE_FILE: "http-tunnel-%p-%m.profraw"
 
-      - name: Gather coverage data
-        id: coverage
-        uses: actions-rs/grcov@v0.1
-
-      - name: Pre-installing rust-covfix
-        uses: actions-rs/install@v0.1
-        with:
-          crate: rust-covfix
-          use-tool-cache: true
-
-      - name: Fix coverage data
-        id: fix-coverage
-        continue-on-error: true
-        run: rust-covfix lcov.info -o lcov.info
+      - name: Generate coverage report
+        run: |
+          grcov . \
+            --binary-path ./target/debug/ \
+            -s . \
+            -t lcov \
+            --branch \
+            --ignore-not-existing \
+            --ignore "/*" \
+            --ignore "target/*" \
+            -o lcov.info
 
       - name: Coveralls upload
-        uses: coverallsapp/github-action@master
+        uses: coverallsapp/github-action@v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           parallel: true
-          path-to-lcov: lcov.info
+          file: lcov.info
 
   grcov_finalize:
     runs-on: ubuntu-latest
     needs: grcov
     steps:
       - name: Coveralls finalization
-        uses: coverallsapp/github-action@master
+        uses: coverallsapp/github-action@v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           parallel-finished: true

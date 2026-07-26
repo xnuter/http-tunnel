@@ -240,23 +240,24 @@ async fn tun_to_quic(
     tun: Arc<tun2::AsyncDevice>,
     mut send: quinn::SendStream,
 ) -> io::Result<()> {
-    let mut buf = vec![0u8; BUF_SIZE];
+    // Combined buffer: 2 bytes length prefix + packet data
+    let mut frame_buf = vec![0u8; 2 + BUF_SIZE];
 
     loop {
-        let n = tun.recv(&mut buf).await?;
+        let n = tun.recv(&mut frame_buf[2..]).await?;
 
         if n == 0 {
             continue;
         }
 
-        info!("TUN→QUIC: read {} bytes from TUN (first byte: 0x{:02x})", n, buf[0]);
+        info!("TUN→QUIC: read {} bytes from TUN (first byte: 0x{:02x})", n, frame_buf[2]);
 
-        // Write length prefix + packet
+        // Write length prefix into frame buffer
         let len = n as u16;
-        send.write_all(&len.to_be_bytes())
-            .await
-            .map_err(|e| io::Error::new(io::ErrorKind::BrokenPipe, e))?;
-        send.write_all(&buf[..n])
+        frame_buf[..2].copy_from_slice(&len.to_be_bytes());
+
+        // Single atomic write: length prefix + packet data
+        send.write_all(&frame_buf[..2 + n])
             .await
             .map_err(|e| io::Error::new(io::ErrorKind::BrokenPipe, e))?;
 

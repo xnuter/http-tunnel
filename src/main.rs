@@ -297,8 +297,7 @@ async fn serve_quic(
 ) -> io::Result<()> {
     use std::net::SocketAddr;
 
-    let server_config =
-        quic::build_quic_server_config(&quic_tls.cert_path, &quic_tls.key_path)?;
+    let server_config = quic::build_quic_server_config(&quic_tls.cert_path, &quic_tls.key_path)?;
 
     let bind_addr: SocketAddr = config.bind_address.parse().map_err(|e| {
         error!("Invalid bind address '{}': {}", config.bind_address, e);

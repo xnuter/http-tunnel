@@ -47,9 +47,9 @@ impl AsyncRead for QuicBiStream {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.recv).poll_read(cx, buf).map_err(|e| {
-            io::Error::new(io::ErrorKind::ConnectionReset, e)
-        })
+        Pin::new(&mut self.recv)
+            .poll_read(cx, buf)
+            .map_err(|e| io::Error::new(io::ErrorKind::ConnectionReset, e))
     }
 }
 

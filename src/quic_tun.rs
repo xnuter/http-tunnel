@@ -89,7 +89,7 @@ pub async fn run_tun_server(
                         "QUIC TUN connection from: {}",
                         connection.remote_address()
                     );
-                    if let Err(e) = handle_tun_connection(connection, tun).await {
+                    if let Err(e) = handle_tun_server_connection(connection, tun).await {
                         error!("TUN connection error: {}", e);
                     }
                 }
@@ -159,7 +159,7 @@ pub async fn run_tun_client(
 
             info!("Connected to QUIC server {}", server_addr);
 
-            handle_tun_connection(connection, tun.clone()).await
+            handle_tun_client_connection(connection, tun.clone()).await
         }
         .await;
 
@@ -176,9 +176,25 @@ pub async fn run_tun_client(
     }
 }
 
-/// Handle a single TUN-over-QUIC connection.
-/// Opens a bi-stream and relays IP packets in both directions.
-async fn handle_tun_connection(
+/// Handle a single TUN-over-QUIC connection on the server side.
+/// Accepts a bi-stream opened by the client and relays IP packets in both directions.
+async fn handle_tun_server_connection(
+    connection: quinn::Connection,
+    tun: Arc<tokio::sync::Mutex<tun2::AsyncDevice>>,
+) -> io::Result<()> {
+    let (send, recv) = connection
+        .accept_bi()
+        .await
+        .map_err(|e| io::Error::new(io::ErrorKind::ConnectionReset, e))?;
+
+    info!("Bi-stream accepted, starting IP packet relay");
+
+    relay_tun_quic(tun, send, recv).await
+}
+
+/// Handle a single TUN-over-QUIC connection on the client side.
+/// Opens a bi-stream to the server and relays IP packets in both directions.
+async fn handle_tun_client_connection(
     connection: quinn::Connection,
     tun: Arc<tokio::sync::Mutex<tun2::AsyncDevice>>,
 ) -> io::Result<()> {
@@ -189,6 +205,15 @@ async fn handle_tun_connection(
 
     info!("Bi-stream opened, starting IP packet relay");
 
+    relay_tun_quic(tun, send, recv).await
+}
+
+/// Bidirectional relay between TUN device and QUIC bi-stream.
+async fn relay_tun_quic(
+    tun: Arc<tokio::sync::Mutex<tun2::AsyncDevice>>,
+    send: quinn::SendStream,
+    recv: quinn::RecvStream,
+) -> io::Result<()> {
     let tun_read = tun.clone();
     let tun_write = tun;
 

@@ -9,8 +9,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install stable toolchain
+      - name: Install stable toolchain with llvm-tools
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
 
       - name: Install grcov
         run: cargo install grcov
@@ -20,18 +22,17 @@ jobs:
         env:
           CARGO_INCREMENTAL: 0
           RUSTFLAGS: "-Cinstrument-coverage"
-          LLVM_PROFILE_FILE: "http-tunnel-%p-%m.profraw"
+          LLVM_PROFILE_FILE: "target/coverage/http-tunnel-%p-%m.profraw"
 
       - name: Generate coverage report
         run: |
-          grcov . \
+          grcov target/coverage \
             --binary-path ./target/debug/ \
             -s . \
             -t lcov \
             --branch \
             --ignore-not-existing \
             --ignore "/*" \
-            --ignore "target/*" \
             -o lcov.info
 
       - name: Coveralls upload

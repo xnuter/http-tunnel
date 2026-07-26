@@ -249,6 +249,8 @@ async fn tun_to_quic(
             continue;
         }
 
+        info!("TUN→QUIC: read {} bytes from TUN (first byte: 0x{:02x})", n, buf[0]);
+
         // Write length prefix + packet
         let len = n as u16;
         send.write_all(&len.to_be_bytes())
@@ -257,6 +259,8 @@ async fn tun_to_quic(
         send.write_all(&buf[..n])
             .await
             .map_err(|e| io::Error::new(io::ErrorKind::BrokenPipe, e))?;
+
+        info!("TUN→QUIC: sent {} bytes to QUIC stream", n);
     }
 }
 
@@ -290,8 +294,11 @@ async fn quic_to_tun(
             .await
             .map_err(|e| io::Error::new(io::ErrorKind::UnexpectedEof, e))?;
 
+        info!("QUIC→TUN: received {} bytes from QUIC (first byte: 0x{:02x})", pkt_len, pkt_buf[0]);
+
         // Write to TUN
-        tun.send(&pkt_buf[..pkt_len]).await?;
+        let written = tun.send(&pkt_buf[..pkt_len]).await?;
+        info!("QUIC→TUN: wrote {} bytes to TUN", written);
     }
 }
 

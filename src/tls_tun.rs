@@ -6,25 +6,23 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! TUN-over-TLS (TCP) VPN module.
+//! TUN-over-TLS (TCP) VPN module — dual-connection architecture.
 //!
-//! Same architecture as `quic_tun` but over TCP/TLS instead of QUIC.
-//! For the ISP this looks like regular HTTPS traffic (TLS on TCP port 443),
-//! which cannot be blocked without breaking the web.
+//! Uses **two TLS connections** for each tunnel: one for sending (TUN→TLS)
+//! and one for receiving (TLS→TUN). This avoids the deadlock inherent in
+//! single-connection bidirectional I/O with TLS (which requires splitting
+//! the stream, and where write_all can block reads and vice versa).
 //!
-//! ## Server mode (`tls-tun-server`)
-//! - Creates TUN device with given IP
-//! - Listens for TLS connections on TCP
-//! - Relays IP packets between TUN and TLS stream
-//! - Requires NAT/masquerade + ip_forward on the host
-//!
-//! ## Client mode (`tls-tun-client`)
-//! - Creates TUN device with given IP
-//! - Connects to TLS server via TCP
-//! - Relays IP packets between TUN and TLS stream
-//! - Auto-reconnects on connection loss
+//! ## Protocol
+//! 1. Client opens two TLS connections to the server
+//! 2. First byte on each connection is the role marker:
+//!    - `0x01` = SEND (client writes framed TUN packets, server reads)
+//!    - `0x02` = RECV (server writes framed TUN packets, client reads)
+//! 3. Server pairs connections by peer IP address
+//! 4. Framing: [u16 big-endian length][IP packet bytes]
 
 use log::{error, info, warn};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -32,7 +30,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Mutex;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
+
+/// Role markers sent as the first byte on each connection.
+const ROLE_SEND: u8 = 0x01; // Client→Server data direction
+const ROLE_RECV: u8 = 0x02; // Server→Client data direction
 
 /// Maximum IP packet size we support (standard MTU).
 const TUN_MTU: u16 = 1400;
@@ -47,12 +50,10 @@ pub async fn run_tls_tun_server(
     tun_addr: Ipv4Addr,
     tun_netmask: Ipv4Addr,
 ) -> io::Result<()> {
-    // Ensure ring crypto provider is installed for rustls 0.23
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let tls_acceptor = build_tls_acceptor(cert_path, key_path)?;
     let listener = TcpListener::bind(bind).await?;
-
     info!("TLS TUN server listening on {}", bind);
 
     // Create TUN device
@@ -60,7 +61,7 @@ pub async fn run_tls_tun_server(
     config
         .address(tun_addr)
         .netmask(tun_netmask)
-        .mtu(TUN_MTU as u16)
+        .mtu(TUN_MTU)
         .up();
 
     #[cfg(target_os = "linux")]
@@ -68,35 +69,99 @@ pub async fn run_tls_tun_server(
         p.ensure_root_privileges(true);
     });
 
-    let tun_dev = tun2::create_as_async(&config).map_err(|e| {
-        error!("Error creating TUN device: {}", e);
-        io::Error::new(io::ErrorKind::Other, e)
-    })?;
-
-    let tun = Arc::new(tun_dev);
+    let tun = Arc::new(tun2::create_as_async(&config).map_err(|e| {
+        error!("Failed to create TUN device: {}", e);
+        io::Error::new(io::ErrorKind::Other, e.to_string())
+    })?);
     info!("TUN device created with address {}/{}", tun_addr, tun_netmask);
+
+    // Pending connections waiting for their partner
+    // Key: peer IP, Value: (role, stream)
+    type PendingMap = Arc<Mutex<HashMap<std::net::IpAddr, PendingConn>>>;
+
+    struct PendingConn {
+        send_stream: Option<tokio_rustls::server::TlsStream<TcpStream>>,
+        recv_stream: Option<tokio_rustls::server::TlsStream<TcpStream>>,
+    }
+
+    let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
 
     loop {
         let (tcp_stream, peer_addr) = listener.accept().await?;
         let acceptor = tls_acceptor.clone();
         let tun = tun.clone();
+        let pending = pending.clone();
+        let _ = tcp_stream.set_nodelay(true);
 
         tokio::spawn(async move {
-            info!("TLS TUN connection from: {}", peer_addr);
-
-            // Set TCP_NODELAY for low latency
-            let _ = tcp_stream.set_nodelay(true);
-
-            match acceptor.accept(tcp_stream).await {
-                Ok(tls_stream) => {
-                    info!("TLS handshake completed with {}", peer_addr);
-                    if let Err(e) = relay_tun_tls(tun, tls_stream).await {
-                        warn!("TLS TUN relay error from {}: {}", peer_addr, e);
-                    }
-                }
+            // TLS handshake
+            let mut tls_stream = match acceptor.accept(tcp_stream).await {
+                Ok(s) => s,
                 Err(e) => {
-                    error!("TLS handshake failed from {}: {}", peer_addr, e);
+                    warn!("TLS handshake failed from {}: {}", peer_addr, e);
+                    return;
                 }
+            };
+
+            // Read role marker
+            let mut role_buf = [0u8; 1];
+            if let Err(e) = tls_stream.read_exact(&mut role_buf).await {
+                warn!("Failed to read role from {}: {}", peer_addr, e);
+                return;
+            }
+
+            let role = role_buf[0];
+            let peer_ip = peer_addr.ip();
+            info!("TLS connection from {} with role 0x{:02x}", peer_addr, role);
+
+            let mut map = pending.lock().await;
+            let entry = map.entry(peer_ip).or_insert(PendingConn {
+                send_stream: None,
+                recv_stream: None,
+            });
+
+            match role {
+                ROLE_SEND => entry.send_stream = Some(tls_stream),
+                ROLE_RECV => entry.recv_stream = Some(tls_stream),
+                _ => {
+                    warn!("Unknown role 0x{:02x} from {}", role, peer_addr);
+                    return;
+                }
+            }
+
+            // Check if we have both connections
+            if entry.send_stream.is_some() && entry.recv_stream.is_some() {
+                let send_stream = entry.send_stream.take().unwrap();
+                let recv_stream = entry.recv_stream.take().unwrap();
+                map.remove(&peer_ip);
+                drop(map); // Release lock before starting relay
+
+                info!("Both connections paired for {}. Starting relay.", peer_ip);
+
+                // Task 1: Client→Server (read from SEND TLS, write to TUN)
+                let tun_write = tun.clone();
+                let send_task = tokio::spawn(async move {
+                    if let Err(e) = tls_to_tun(send_stream, tun_write).await {
+                        warn!("Client→TUN relay stopped for {}: {}", peer_ip, e);
+                    }
+                });
+
+                // Task 2: Server→Client (read from TUN, write to RECV TLS)
+                let tun_read = tun.clone();
+                let recv_task = tokio::spawn(async move {
+                    if let Err(e) = tun_to_tls(tun_read, recv_stream).await {
+                        warn!("TUN→Client relay stopped for {}: {}", peer_ip, e);
+                    }
+                });
+
+                tokio::select! {
+                    _ = send_task => {}
+                    _ = recv_task => {}
+                }
+                info!("Relay ended for {}", peer_ip);
+            } else {
+                info!("Waiting for partner connection from {}", peer_ip);
+                drop(map);
             }
         });
     }
@@ -110,140 +175,153 @@ pub async fn run_tls_tun_client(
     tun_netmask: Ipv4Addr,
     insecure: bool,
 ) -> io::Result<()> {
-    // Ensure ring crypto provider is installed for rustls 0.23
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     // Create TUN device once
     let mut config = tun2::Configuration::default();
     config
-        .tun_name(tun_name)
         .address(tun_addr)
         .netmask(tun_netmask)
-        .mtu(TUN_MTU as u16)
+        .mtu(TUN_MTU)
         .up();
 
     #[cfg(target_os = "linux")]
-    config.platform_config(|p| {
-        p.ensure_root_privileges(true);
-    });
+    {
+        config.platform_config(|p| {
+            p.ensure_root_privileges(true);
+        });
+        config.name(tun_name);
+    }
 
-    let tun_dev = tun2::create_as_async(&config).map_err(|e| {
-        error!("Error creating TUN device '{}': {}", tun_name, e);
-        io::Error::new(io::ErrorKind::Other, e)
-    })?;
-
-    let tun = Arc::new(tun_dev);
+    let tun = Arc::new(tun2::create_as_async(&config).map_err(|e| {
+        error!("Failed to create TUN device '{}': {}", tun_name, e);
+        io::Error::new(io::ErrorKind::Other, e.to_string())
+    })?);
     info!("TUN device '{}' created with address {}/{}", tun_name, tun_addr, tun_netmask);
 
+    // Build TLS connector
     let tls_connector = build_tls_connector(insecure)?;
+    let server_name = rustls::pki_types::ServerName::IpAddress(
+        std::net::IpAddr::from(server_addr.ip()).into(),
+    );
 
+    // Auto-reconnect loop
     loop {
-        info!("Connecting to TLS server at {}...", server_addr);
+        info!("Connecting two TLS channels to {}...", server_addr);
 
         let connect_result = async {
-            let tcp_stream = TcpStream::connect(server_addr).await?;
-            let _ = tcp_stream.set_nodelay(true);
-
-            let server_name = rustls::pki_types::ServerName::try_from("tunnel")
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-
-            let tls_stream = tls_connector
-                .connect(server_name, tcp_stream)
+            // Connection 1: SEND (client writes TUN packets)
+            let tcp1 = TcpStream::connect(server_addr).await?;
+            tcp1.set_nodelay(true)?;
+            let mut send_stream = tls_connector
+                .connect(server_name.clone(), tcp1)
                 .await
                 .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e))?;
+            send_stream.write_all(&[ROLE_SEND]).await?;
+            send_stream.flush().await?;
+            info!("SEND channel connected");
 
-            info!("Connected to TLS server {}", server_addr);
+            // Connection 2: RECV (client reads TUN packets)
+            let tcp2 = TcpStream::connect(server_addr).await?;
+            tcp2.set_nodelay(true)?;
+            let mut recv_stream = tls_connector
+                .connect(server_name.clone(), tcp2)
+                .await
+                .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e))?;
+            recv_stream.write_all(&[ROLE_RECV]).await?;
+            recv_stream.flush().await?;
+            info!("RECV channel connected");
 
-            relay_tun_tls(tun.clone(), tls_stream).await
+            // Task 1: TUN → SEND TLS (client writes)
+            let tun_read = tun.clone();
+            let send_task = tokio::spawn(async move {
+                tun_to_tls(tun_read, send_stream).await
+            });
+
+            // Task 2: RECV TLS → TUN (client reads)
+            let tun_write = tun.clone();
+            let recv_task = tokio::spawn(async move {
+                tls_to_tun(recv_stream, tun_write).await
+            });
+
+            // Wait for either direction to finish
+            tokio::select! {
+                r = send_task => {
+                    if let Ok(Err(e)) = r {
+                        warn!("TUN→TLS relay stopped: {}", e);
+                    }
+                }
+                r = recv_task => {
+                    if let Ok(Err(e)) = r {
+                        warn!("TLS→TUN relay stopped: {}", e);
+                    }
+                }
+            }
+            Ok::<(), io::Error>(())
         }
         .await;
 
-        match connect_result {
-            Ok(()) => {
-                warn!("Connection closed gracefully, reconnecting...");
-            }
-            Err(e) => {
-                error!("Connection error: {}, reconnecting in 5s...", e);
-            }
+        if let Err(e) = connect_result {
+            warn!("Connection failed: {}. Reconnecting in 5s...", e);
+        } else {
+            warn!("Connection closed. Reconnecting in 5s...");
         }
 
         tokio::time::sleep(Duration::from_secs(5)).await;
     }
 }
 
-/// Bidirectional relay between TUN device and TLS stream.
-/// Uses a single-loop approach with select! to avoid tokio::io::split,
-/// which has lock contention issues with TLS streams.
-async fn relay_tun_tls<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+/// Relay: read framed packets from TUN, write to TLS stream.
+async fn tun_to_tls<W: AsyncWriteExt + Unpin>(
     tun: Arc<tun2::AsyncDevice>,
-    mut tls_stream: S,
+    mut writer: W,
 ) -> io::Result<()> {
-    use tokio::io::AsyncReadExt;
+    let mut frame_buf = vec![0u8; 2 + BUF_SIZE];
 
-    let mut tun_buf = vec![0u8; 2 + BUF_SIZE];
-    let mut tls_read_buf = vec![0u8; 2 + BUF_SIZE];
-    let mut tls_accum = Vec::with_capacity(4 * BUF_SIZE);
-
-    info!("relay: bidirectional relay started");
+    info!("tun_to_tls: relay started");
 
     loop {
-        tokio::select! {
-            // Direction 1: TUN → TLS
-            result = tun.recv(&mut tun_buf[2..]) => {
-                let n = result?;
-                if n == 0 { continue; }
-
-                info!("TUN→TLS: read {} bytes from TUN (first byte: 0x{:02x})", n, tun_buf[2]);
-
-                // Frame: [u16 length][packet]
-                let len = n as u16;
-                tun_buf[..2].copy_from_slice(&len.to_be_bytes());
-                tls_stream.write_all(&tun_buf[..2 + n]).await?;
-                tls_stream.flush().await?;
-
-                info!("TUN→TLS: sent {} bytes to TLS stream", n);
-            }
-
-            // Direction 2: TLS → TUN
-            // Use read() (cancel-safe) instead of read_exact() (not cancel-safe)
-            result = tls_stream.read(&mut tls_read_buf) => {
-                let n = result?;
-                if n == 0 {
-                    info!("TLS stream closed");
-                    return Ok(());
-                }
-
-                info!("TLS→TUN: received {} raw bytes from TLS", n);
-
-                // Accumulate data and extract complete framed packets
-                tls_accum.extend_from_slice(&tls_read_buf[..n]);
-
-                while tls_accum.len() >= 2 {
-                    let pkt_len = u16::from_be_bytes([tls_accum[0], tls_accum[1]]) as usize;
-
-                    if pkt_len == 0 || pkt_len > BUF_SIZE {
-                        error!("Invalid packet length: {}", pkt_len);
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!("Invalid packet length: {}", pkt_len),
-                        ));
-                    }
-
-                    if tls_accum.len() < 2 + pkt_len {
-                        // Not enough data yet, wait for more
-                        break;
-                    }
-
-                    // Extract complete packet
-                    let pkt_data = &tls_accum[2..2 + pkt_len];
-                    info!("TLS→TUN: writing {} bytes to TUN (first byte: 0x{:02x})", pkt_len, pkt_data[0]);
-                    tun.send(pkt_data).await?;
-
-                    // Remove processed data
-                    tls_accum.drain(..2 + pkt_len);
-                }
-            }
+        let n = tun.recv(&mut frame_buf[2..]).await?;
+        if n == 0 {
+            continue;
         }
+
+        // Write length prefix + packet in one write
+        let len = n as u16;
+        frame_buf[..2].copy_from_slice(&len.to_be_bytes());
+        writer.write_all(&frame_buf[..2 + n]).await?;
+        writer.flush().await?;
+    }
+}
+
+/// Relay: read framed packets from TLS stream, write to TUN.
+async fn tls_to_tun<R: AsyncReadExt + Unpin>(
+    mut reader: R,
+    tun: Arc<tun2::AsyncDevice>,
+) -> io::Result<()> {
+    let mut len_buf = [0u8; 2];
+    let mut pkt_buf = vec![0u8; BUF_SIZE];
+
+    info!("tls_to_tun: relay started");
+
+    loop {
+        // Read length prefix
+        reader.read_exact(&mut len_buf).await?;
+        let pkt_len = u16::from_be_bytes(len_buf) as usize;
+
+        if pkt_len == 0 || pkt_len > BUF_SIZE {
+            error!("Invalid packet length: {}", pkt_len);
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Invalid packet length: {}", pkt_len),
+            ));
+        }
+
+        // Read packet
+        reader.read_exact(&mut pkt_buf[..pkt_len]).await?;
+
+        // Write to TUN
+        tun.send(&pkt_buf[..pkt_len]).await?;
     }
 }
 
@@ -255,11 +333,8 @@ fn build_tls_acceptor(cert_path: &str, key_path: &str) -> io::Result<TlsAcceptor
     })?;
     let mut cert_reader = BufReader::new(cert_file);
     let certs: Vec<_> = rustls_pemfile::certs(&mut cert_reader)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| {
-            error!("Error reading certificates: {}", e);
-            io::Error::from(io::ErrorKind::InvalidData)
-        })?;
+        .filter_map(|c| c.ok())
+        .collect();
 
     let key_file = File::open(key_path).map_err(|e| {
         error!("Error opening key file {}: {}", key_path, e);
@@ -269,22 +344,22 @@ fn build_tls_acceptor(cert_path: &str, key_path: &str) -> io::Result<TlsAcceptor
     let key = rustls_pemfile::private_key(&mut key_reader)
         .map_err(|e| {
             error!("Error reading private key: {}", e);
-            io::Error::from(io::ErrorKind::InvalidData)
+            io::Error::new(io::ErrorKind::InvalidData, e)
         })?
         .ok_or_else(|| {
             error!("No private key found in {}", key_path);
-            io::Error::from(io::ErrorKind::InvalidData)
+            io::Error::new(io::ErrorKind::InvalidData, "No private key found")
         })?;
 
-    let rustls_config = rustls::ServerConfig::builder()
+    let config = rustls::ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(certs, key)
         .map_err(|e| {
-            error!("Error building TLS config: {}", e);
-            io::Error::new(io::ErrorKind::InvalidInput, e)
+            error!("TLS config error: {}", e);
+            io::Error::new(io::ErrorKind::InvalidData, e)
         })?;
 
-    Ok(TlsAcceptor::from(Arc::new(rustls_config)))
+    Ok(TlsAcceptor::from(Arc::new(config)))
 }
 
 /// Build TLS connector for client.
@@ -292,24 +367,24 @@ fn build_tls_connector(insecure: bool) -> io::Result<TlsConnector> {
     let config = if insecure {
         rustls::ClientConfig::builder()
             .dangerous()
-            .with_custom_certificate_verifier(Arc::new(InsecureCertVerifier))
+            .with_custom_certificate_verifier(Arc::new(InsecureVerifier))
             .with_no_client_auth()
     } else {
-        let mut roots = rustls::RootCertStore::empty();
-        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let mut root_store = rustls::RootCertStore::empty();
+        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
         rustls::ClientConfig::builder()
-            .with_root_certificates(roots)
+            .with_root_certificates(root_store)
             .with_no_client_auth()
     };
 
     Ok(TlsConnector::from(Arc::new(config)))
 }
 
-/// Certificate verifier that accepts any certificate (for self-signed certs).
+/// Insecure TLS verifier that accepts any certificate (for self-signed certs).
 #[derive(Debug)]
-struct InsecureCertVerifier;
+struct InsecureVerifier;
 
-impl rustls::client::danger::ServerCertVerifier for InsecureCertVerifier {
+impl rustls::client::danger::ServerCertVerifier for InsecureVerifier {
     fn verify_server_cert(
         &self,
         _end_entity: &rustls::pki_types::CertificateDer<'_>,
@@ -340,18 +415,8 @@ impl rustls::client::danger::ServerCertVerifier for InsecureCertVerifier {
     }
 
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        vec![
-            rustls::SignatureScheme::RSA_PKCS1_SHA256,
-            rustls::SignatureScheme::RSA_PKCS1_SHA384,
-            rustls::SignatureScheme::RSA_PKCS1_SHA512,
-            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
-            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
-            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
-            rustls::SignatureScheme::RSA_PSS_SHA256,
-            rustls::SignatureScheme::RSA_PSS_SHA384,
-            rustls::SignatureScheme::RSA_PSS_SHA512,
-            rustls::SignatureScheme::ED25519,
-            rustls::SignatureScheme::ED448,
-        ]
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
     }
 }

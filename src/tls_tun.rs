@@ -286,11 +286,15 @@ async fn tun_to_tls<W: AsyncWriteExt + Unpin>(
             continue;
         }
 
+        info!("TUN→TLS: {} bytes (first: 0x{:02x})", n, frame_buf[2]);
+
         // Write length prefix + packet in one write
         let len = n as u16;
         frame_buf[..2].copy_from_slice(&len.to_be_bytes());
         writer.write_all(&frame_buf[..2 + n]).await?;
         writer.flush().await?;
+
+        info!("TUN→TLS: sent OK");
     }
 }
 
@@ -302,12 +306,13 @@ async fn tls_to_tun<R: AsyncReadExt + Unpin>(
     let mut len_buf = [0u8; 2];
     let mut pkt_buf = vec![0u8; BUF_SIZE];
 
-    info!("tls_to_tun: relay started");
+    info!("tls_to_tun: relay started, waiting for data...");
 
     loop {
         // Read length prefix
         reader.read_exact(&mut len_buf).await?;
         let pkt_len = u16::from_be_bytes(len_buf) as usize;
+        info!("TLS→TUN: length prefix = {}", pkt_len);
 
         if pkt_len == 0 || pkt_len > BUF_SIZE {
             error!("Invalid packet length: {}", pkt_len);
@@ -319,6 +324,7 @@ async fn tls_to_tun<R: AsyncReadExt + Unpin>(
 
         // Read packet
         reader.read_exact(&mut pkt_buf[..pkt_len]).await?;
+        info!("TLS→TUN: writing {} bytes to TUN (first: 0x{:02x})", pkt_len, pkt_buf[0]);
 
         // Write to TUN
         tun.send(&pkt_buf[..pkt_len]).await?;

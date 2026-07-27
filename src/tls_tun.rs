@@ -271,34 +271,48 @@ pub async fn run_tls_tun_client(
     }
 }
 
+/// Keepalive interval to prevent NAT timeout.
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
+
 /// Relay: read framed packets from TUN, write to TLS stream.
+/// Sends keepalive heartbeats during idle periods to prevent NAT timeout.
 async fn tun_to_tls<W: AsyncWriteExt + Unpin>(
     tun: Arc<tun2::AsyncDevice>,
     mut writer: W,
 ) -> io::Result<()> {
     let mut frame_buf = vec![0u8; 2 + BUF_SIZE];
+    let keepalive_frame: [u8; 2] = [0x00, 0x00]; // Zero-length = keepalive
 
-    info!("tun_to_tls: relay started");
+    info!("tun_to_tls: relay started (keepalive every {}s)", KEEPALIVE_INTERVAL.as_secs());
 
     loop {
-        let n = tun.recv(&mut frame_buf[2..]).await?;
-        if n == 0 {
-            continue;
+        tokio::select! {
+            result = tun.recv(&mut frame_buf[2..]) => {
+                let n = result?;
+                if n == 0 {
+                    continue;
+                }
+
+                info!("TUN→TLS: {} bytes (first: 0x{:02x})", n, frame_buf[2]);
+
+                // Write length prefix + packet in one write
+                let len = n as u16;
+                frame_buf[..2].copy_from_slice(&len.to_be_bytes());
+                writer.write_all(&frame_buf[..2 + n]).await?;
+                writer.flush().await?;
+            }
+            _ = tokio::time::sleep(KEEPALIVE_INTERVAL) => {
+                // Send keepalive heartbeat
+                writer.write_all(&keepalive_frame).await?;
+                writer.flush().await?;
+                info!("TUN→TLS: keepalive sent");
+            }
         }
-
-        info!("TUN→TLS: {} bytes (first: 0x{:02x})", n, frame_buf[2]);
-
-        // Write length prefix + packet in one write
-        let len = n as u16;
-        frame_buf[..2].copy_from_slice(&len.to_be_bytes());
-        writer.write_all(&frame_buf[..2 + n]).await?;
-        writer.flush().await?;
-
-        info!("TUN→TLS: sent OK");
     }
 }
 
 /// Relay: read framed packets from TLS stream, write to TUN.
+/// Handles keepalive frames (length=0) by silently discarding them.
 async fn tls_to_tun<R: AsyncReadExt + Unpin>(
     mut reader: R,
     tun: Arc<tun2::AsyncDevice>,
@@ -312,9 +326,13 @@ async fn tls_to_tun<R: AsyncReadExt + Unpin>(
         // Read length prefix
         reader.read_exact(&mut len_buf).await?;
         let pkt_len = u16::from_be_bytes(len_buf) as usize;
-        info!("TLS→TUN: length prefix = {}", pkt_len);
 
-        if pkt_len == 0 || pkt_len > BUF_SIZE {
+        // Keepalive frame (zero length) - just skip
+        if pkt_len == 0 {
+            continue;
+        }
+
+        if pkt_len > BUF_SIZE {
             error!("Invalid packet length: {}", pkt_len);
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -324,7 +342,7 @@ async fn tls_to_tun<R: AsyncReadExt + Unpin>(
 
         // Read packet
         reader.read_exact(&mut pkt_buf[..pkt_len]).await?;
-        info!("TLS→TUN: writing {} bytes to TUN (first: 0x{:02x})", pkt_len, pkt_buf[0]);
+        info!("TLS→TUN: {} bytes (first: 0x{:02x})", pkt_len, pkt_buf[0]);
 
         // Write to TUN
         tun.send(&pkt_buf[..pkt_len]).await?;

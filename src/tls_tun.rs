@@ -47,6 +47,9 @@ pub async fn run_tls_tun_server(
     tun_addr: Ipv4Addr,
     tun_netmask: Ipv4Addr,
 ) -> io::Result<()> {
+    // Ensure ring crypto provider is installed for rustls 0.23
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let tls_acceptor = build_tls_acceptor(cert_path, key_path)?;
     let listener = TcpListener::bind(bind).await?;
 
@@ -107,6 +110,9 @@ pub async fn run_tls_tun_client(
     tun_netmask: Ipv4Addr,
     insecure: bool,
 ) -> io::Result<()> {
+    // Ensure ring crypto provider is installed for rustls 0.23
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // Create TUN device once
     let mut config = tun2::Configuration::default();
     config

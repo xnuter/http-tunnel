@@ -214,12 +214,16 @@ async fn tun_to_tls<W: tokio::io::AsyncWrite + Unpin>(
 ) -> io::Result<()> {
     let mut frame_buf = vec![0u8; 2 + BUF_SIZE];
 
+    info!("tun_to_tls: relay task started, waiting for TUN packets...");
+
     loop {
         let n = tun.recv(&mut frame_buf[2..]).await?;
 
         if n == 0 {
             continue;
         }
+
+        info!("TUN→TLS: read {} bytes from TUN (first byte: 0x{:02x})", n, frame_buf[2]);
 
         // Write length prefix into frame buffer
         let len = n as u16;
@@ -228,6 +232,8 @@ async fn tun_to_tls<W: tokio::io::AsyncWrite + Unpin>(
         // Single atomic write: length prefix + packet data
         writer.write_all(&frame_buf[..2 + n]).await?;
         writer.flush().await?;
+
+        info!("TUN→TLS: sent {} bytes to TLS stream", n);
     }
 }
 
@@ -239,6 +245,8 @@ async fn tls_to_tun<R: tokio::io::AsyncRead + Unpin>(
 ) -> io::Result<()> {
     let mut len_buf = [0u8; 2];
     let mut pkt_buf = vec![0u8; BUF_SIZE];
+
+    info!("tls_to_tun: relay task started, waiting for TLS data...");
 
     loop {
         // Read length prefix

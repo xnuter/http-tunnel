@@ -172,101 +172,78 @@ pub async fn run_tls_tun_client(
 }
 
 /// Bidirectional relay between TUN device and TLS stream.
-async fn relay_tun_tls<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + 'static>(
+/// Uses a single-loop approach with select! to avoid tokio::io::split,
+/// which has lock contention issues with TLS streams.
+async fn relay_tun_tls<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
     tun: Arc<tun2::AsyncDevice>,
-    tls_stream: S,
+    mut tls_stream: S,
 ) -> io::Result<()> {
-    let (read_half, write_half) = tokio::io::split(tls_stream);
+    use tokio::io::AsyncReadExt;
 
-    let tun_read = tun.clone();
-    let tun_write = tun;
+    let mut tun_buf = vec![0u8; 2 + BUF_SIZE];
+    let mut tls_read_buf = vec![0u8; 2 + BUF_SIZE];
+    let mut tls_accum = Vec::with_capacity(4 * BUF_SIZE);
 
-    let send_task = tokio::spawn(async move {
-        tun_to_tls(tun_read, write_half).await
-    });
-
-    let recv_task = tokio::spawn(async move {
-        tls_to_tun(read_half, tun_write).await
-    });
-
-    // Wait for either direction to finish
-    tokio::select! {
-        r = send_task => {
-            if let Ok(Err(e)) = r {
-                warn!("TUN→TLS relay stopped: {}", e);
-            }
-        }
-        r = recv_task => {
-            if let Ok(Err(e)) = r {
-                warn!("TLS→TUN relay stopped: {}", e);
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Relay IP packets from TUN device to TLS write stream.
-/// Framing: [u16 big-endian length][IP packet bytes]
-async fn tun_to_tls<W: tokio::io::AsyncWrite + Unpin>(
-    tun: Arc<tun2::AsyncDevice>,
-    mut writer: W,
-) -> io::Result<()> {
-    let mut frame_buf = vec![0u8; 2 + BUF_SIZE];
-
-    info!("tun_to_tls: relay task started, waiting for TUN packets...");
+    info!("relay: bidirectional relay started");
 
     loop {
-        let n = tun.recv(&mut frame_buf[2..]).await?;
+        tokio::select! {
+            // Direction 1: TUN → TLS
+            result = tun.recv(&mut tun_buf[2..]) => {
+                let n = result?;
+                if n == 0 { continue; }
 
-        if n == 0 {
-            continue;
+                info!("TUN→TLS: read {} bytes from TUN (first byte: 0x{:02x})", n, tun_buf[2]);
+
+                // Frame: [u16 length][packet]
+                let len = n as u16;
+                tun_buf[..2].copy_from_slice(&len.to_be_bytes());
+                tls_stream.write_all(&tun_buf[..2 + n]).await?;
+                tls_stream.flush().await?;
+
+                info!("TUN→TLS: sent {} bytes to TLS stream", n);
+            }
+
+            // Direction 2: TLS → TUN
+            // Use read() (cancel-safe) instead of read_exact() (not cancel-safe)
+            result = tls_stream.read(&mut tls_read_buf) => {
+                let n = result?;
+                if n == 0 {
+                    info!("TLS stream closed");
+                    return Ok(());
+                }
+
+                info!("TLS→TUN: received {} raw bytes from TLS", n);
+
+                // Accumulate data and extract complete framed packets
+                tls_accum.extend_from_slice(&tls_read_buf[..n]);
+
+                while tls_accum.len() >= 2 {
+                    let pkt_len = u16::from_be_bytes([tls_accum[0], tls_accum[1]]) as usize;
+
+                    if pkt_len == 0 || pkt_len > BUF_SIZE {
+                        error!("Invalid packet length: {}", pkt_len);
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Invalid packet length: {}", pkt_len),
+                        ));
+                    }
+
+                    if tls_accum.len() < 2 + pkt_len {
+                        // Not enough data yet, wait for more
+                        break;
+                    }
+
+                    // Extract complete packet
+                    let pkt_data = &tls_accum[2..2 + pkt_len];
+                    info!("TLS→TUN: writing {} bytes to TUN (first byte: 0x{:02x})", pkt_len, pkt_data[0]);
+                    tun.send(pkt_data).await?;
+
+                    // Remove processed data
+                    tls_accum.drain(..2 + pkt_len);
+                }
+            }
         }
-
-        info!("TUN→TLS: read {} bytes from TUN (first byte: 0x{:02x})", n, frame_buf[2]);
-
-        // Write length prefix into frame buffer
-        let len = n as u16;
-        frame_buf[..2].copy_from_slice(&len.to_be_bytes());
-
-        // Single atomic write: length prefix + packet data
-        writer.write_all(&frame_buf[..2 + n]).await?;
-        writer.flush().await?;
-
-        info!("TUN→TLS: sent {} bytes to TLS stream", n);
-    }
-}
-
-/// Relay IP packets from TLS read stream to TUN device.
-/// Reads framed packets: [u16 big-endian length][IP packet bytes]
-async fn tls_to_tun<R: tokio::io::AsyncRead + Unpin>(
-    mut reader: R,
-    tun: Arc<tun2::AsyncDevice>,
-) -> io::Result<()> {
-    let mut len_buf = [0u8; 2];
-    let mut pkt_buf = vec![0u8; BUF_SIZE];
-
-    info!("tls_to_tun: relay task started, waiting for TLS data...");
-
-    loop {
-        // Read length prefix
-        reader.read_exact(&mut len_buf).await?;
-
-        let pkt_len = u16::from_be_bytes(len_buf) as usize;
-
-        if pkt_len == 0 || pkt_len > BUF_SIZE {
-            error!("Invalid packet length: {}", pkt_len);
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Invalid packet length: {}", pkt_len),
-            ));
-        }
-
-        // Read packet
-        reader.read_exact(&mut pkt_buf[..pkt_len]).await?;
-
-        // Write to TUN
-        tun.send(&pkt_buf[..pkt_len]).await?;
     }
 }
 

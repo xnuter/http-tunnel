@@ -122,6 +122,7 @@ async fn main() -> io::Result<()> {
                 &tun_config.key_path,
                 tun_config.tun_addr,
                 tun_config.tun_netmask,
+                tun_config.no_tls,
             )
             .await?;
         }
@@ -138,6 +139,7 @@ async fn main() -> io::Result<()> {
                 tun_config.tun_addr,
                 tun_config.tun_netmask,
                 tun_config.insecure,
+                tun_config.no_tls,
             )
             .await?;
         }

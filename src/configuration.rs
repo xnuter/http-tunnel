@@ -77,6 +77,7 @@ pub struct TunServerConfig {
     pub key_path: String,
     pub tun_addr: std::net::Ipv4Addr,
     pub tun_netmask: std::net::Ipv4Addr,
+    pub no_tls: bool,
 }
 
 /// Configuration for TUN-over-QUIC VPN client.
@@ -88,6 +89,7 @@ pub struct TunClientConfig {
     pub tun_addr: std::net::Ipv4Addr,
     pub tun_netmask: std::net::Ipv4Addr,
     pub insecure: bool,
+    pub no_tls: bool,
 }
 
 #[derive(Clone, Builder)]
@@ -215,10 +217,10 @@ struct TunClientOptions {
 #[clap(about = "Run as TUN-over-TLS (TCP) VPN server", long_about = None)]
 struct TlsTunServerOptions {
     /// PEM-encoded certificate file.
-    #[clap(long)]
+    #[clap(long, default_value = "")]
     cert: String,
     /// PEM-encoded private key file.
-    #[clap(long)]
+    #[clap(long, default_value = "")]
     key: String,
     /// TUN device IP address (e.g. 10.9.0.1).
     #[clap(long, default_value = "10.9.0.1")]
@@ -226,6 +228,9 @@ struct TlsTunServerOptions {
     /// TUN device netmask (e.g. 255.255.255.0).
     #[clap(long, default_value = "255.255.255.0")]
     tun_netmask: std::net::Ipv4Addr,
+    /// Use plain TCP instead of TLS (bypasses DPI).
+    #[clap(long, default_value = "false")]
+    no_tls: bool,
 }
 
 #[cfg(feature = "tun-vpn")]
@@ -247,6 +252,9 @@ struct TlsTunClientOptions {
     /// Skip TLS certificate verification (for self-signed certs).
     #[clap(long, default_value = "false")]
     insecure: bool,
+    /// Use plain TCP instead of TLS (bypasses DPI).
+    #[clap(long, default_value = "false")]
+    no_tls: bool,
 }
 
 impl Default for TunnelConfig {
@@ -337,6 +345,7 @@ impl ProxyConfiguration {
                     key_path: opts.key,
                     tun_addr: opts.tun_addr,
                     tun_netmask: opts.tun_netmask,
+                    no_tls: false,
                 })
             }
             #[cfg(feature = "tun-vpn")]
@@ -351,26 +360,28 @@ impl ProxyConfiguration {
                     tun_addr: opts.tun_addr,
                     tun_netmask: opts.tun_netmask,
                     insecure: opts.insecure,
+                    no_tls: false,
                 })
             }
             #[cfg(feature = "tun-vpn")]
             Commands::TlsTunServer(opts) => {
                 info!(
-                    "Starting TLS TUN VPN server: cert: {}, key: {}, tun: {}/{}, bind: {}",
-                    opts.cert, opts.key, opts.tun_addr, opts.tun_netmask, bind_address
+                    "Starting TLS TUN VPN server: cert: {}, key: {}, tun: {}/{}, bind: {}, no_tls: {}",
+                    opts.cert, opts.key, opts.tun_addr, opts.tun_netmask, bind_address, opts.no_tls
                 );
                 ProxyMode::TlsTunServer(TunServerConfig {
                     cert_path: opts.cert,
                     key_path: opts.key,
                     tun_addr: opts.tun_addr,
                     tun_netmask: opts.tun_netmask,
+                    no_tls: opts.no_tls,
                 })
             }
             #[cfg(feature = "tun-vpn")]
             Commands::TlsTunClient(opts) => {
                 info!(
-                    "Starting TLS TUN VPN client: server: {}, tun: {} ({}/{}), insecure: {}",
-                    opts.server, opts.tun_name, opts.tun_addr, opts.tun_netmask, opts.insecure
+                    "Starting TLS TUN VPN client: server: {}, tun: {} ({}/{}), insecure: {}, no_tls: {}",
+                    opts.server, opts.tun_name, opts.tun_addr, opts.tun_netmask, opts.insecure, opts.no_tls
                 );
                 ProxyMode::TlsTunClient(TunClientConfig {
                     server_addr: opts.server,
@@ -378,6 +389,7 @@ impl ProxyConfiguration {
                     tun_addr: opts.tun_addr,
                     tun_netmask: opts.tun_netmask,
                     insecure: opts.insecure,
+                    no_tls: opts.no_tls,
                 })
             }
         };

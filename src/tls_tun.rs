@@ -6,12 +6,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! TUN-over-TLS (TCP) VPN module — single-connection with `tokio::io::split`.
+//! TUN-over-TCP VPN module — supports both TLS and plain TCP modes.
 //!
-//! Uses one TLS connection per peer, split into independent read/write halves.
-//! This allows TLS to process incoming records (e.g. NewSessionTicket) via the
-//! read half while the write half sends tunnel data — preventing the TCP ACK
-//! stall seen with separate connections.
+//! Uses one connection per peer, split into independent read/write halves
+//! via `tokio::io::split`. Supports `--no-tls` flag to bypass ISP DPI
+//! that blocks TLS ClientHello.
 //!
 //! ## Protocol
 //! - Framing: `[u16 big-endian length][IP packet bytes]`
@@ -34,20 +33,26 @@ const BUF_SIZE: usize = TUN_MTU as usize + 4;
 /// Keepalive interval to prevent NAT timeout.
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
 
-/// Run the TUN-over-TLS server.
+/// Run the TUN-over-TCP server (with optional TLS).
 pub async fn run_tls_tun_server(
     bind: SocketAddr,
     cert_path: &str,
     key_path: &str,
     tun_addr: Ipv4Addr,
     tun_netmask: Ipv4Addr,
+    no_tls: bool,
 ) -> io::Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    let tls_acceptor = build_tls_acceptor(cert_path, key_path)?;
+    let tls_acceptor = if no_tls {
+        info!("Running in PLAIN TCP mode (no TLS)");
+        None
+    } else {
+        Some(build_tls_acceptor(cert_path, key_path)?)
+    };
 
     let listener = TcpListener::bind(bind).await?;
-    info!("TLS TUN server listening on {}", bind);
+    info!("{} TUN server listening on {}", if no_tls { "TCP" } else { "TLS" }, bind);
 
     // Create TUN device
     let mut config = tun2::Configuration::default();
@@ -75,54 +80,36 @@ pub async fn run_tls_tun_server(
         let _ = tcp_stream.set_nodelay(true);
 
         tokio::spawn(async move {
-            // TLS handshake
-            let tls_stream = match acceptor.accept(tcp_stream).await {
-                Ok(s) => s,
-                Err(e) => {
-                    warn!("TLS handshake failed from {}: {}", peer_addr, e);
-                    return;
-                }
-            };
-
-            info!("TLS connection from {}. Starting relay.", peer_addr);
-
-            // Split into read/write halves
-            let (reader, writer) = tokio::io::split(tls_stream);
-
-            // Task 1: TLS→TUN (read from client, write to TUN)
-            let tun_write = tun.clone();
-            let peer_ip = peer_addr.ip();
-            let read_task = tokio::spawn(async move {
-                if let Err(e) = tls_to_tun(reader, tun_write).await {
-                    warn!("Client→TUN relay stopped for {}: {}", peer_ip, e);
-                }
-            });
-
-            // Task 2: TUN→TLS (read from TUN, write to client)
-            let tun_read = tun.clone();
-            let peer_ip2 = peer_addr.ip();
-            let write_task = tokio::spawn(async move {
-                if let Err(e) = tun_to_tls(tun_read, writer).await {
-                    warn!("TUN→Client relay stopped for {}: {}", peer_ip2, e);
-                }
-            });
-
-            tokio::select! {
-                _ = read_task => {}
-                _ = write_task => {}
+            if let Some(acceptor) = acceptor {
+                // TLS mode
+                let tls_stream = match acceptor.accept(tcp_stream).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        warn!("TLS handshake failed from {}: {}", peer_addr, e);
+                        return;
+                    }
+                };
+                info!("TLS connection from {}. Starting relay.", peer_addr);
+                let (reader, writer) = tokio::io::split(tls_stream);
+                run_relay(tun, peer_addr, reader, writer).await;
+            } else {
+                // Plain TCP mode
+                info!("TCP connection from {}. Starting relay.", peer_addr);
+                let (reader, writer) = tokio::io::split(tcp_stream);
+                run_relay(tun, peer_addr, reader, writer).await;
             }
-            info!("Relay ended for {}", peer_addr);
         });
     }
 }
 
-/// Run the TUN-over-TLS client with auto-reconnect.
+/// Run the TUN-over-TCP client with auto-reconnect (with optional TLS).
 pub async fn run_tls_tun_client(
     server_addr: SocketAddr,
     tun_name: &str,
     tun_addr: Ipv4Addr,
     tun_netmask: Ipv4Addr,
     insecure: bool,
+    no_tls: bool,
 ) -> io::Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -148,54 +135,44 @@ pub async fn run_tls_tun_client(
     })?);
     info!("TUN device '{}' created with address {}/{}", tun_name, tun_addr, tun_netmask);
 
-    // Build TLS connector
-    let tls_connector = build_tls_connector(insecure)?;
+    // Build TLS connector (only if TLS mode)
+    let tls_connector = if no_tls {
+        info!("Running in PLAIN TCP mode (no TLS)");
+        None
+    } else {
+        Some(build_tls_connector(insecure)?)
+    };
     let server_name = rustls::pki_types::ServerName::IpAddress(
         std::net::IpAddr::from(server_addr.ip()).into(),
     );
 
     // Auto-reconnect loop
     loop {
-        info!("Connecting to {}...", server_addr);
+        info!("Connecting to {} ({})...", server_addr, if no_tls { "TCP" } else { "TLS" });
 
         let connect_result = async {
             let tcp = TcpStream::connect(server_addr).await?;
             tcp.set_nodelay(true)?;
-            let tls_stream = tls_connector
-                .connect(server_name.clone(), tcp)
-                .await
-                .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e))?;
-            info!("TLS connected to {}", server_addr);
 
-            // Split into read/write halves
-            let (reader, writer) = tokio::io::split(tls_stream);
+            if let Some(ref connector) = tls_connector {
+                // TLS mode
+                let tls_stream = connector
+                    .connect(server_name.clone(), tcp)
+                    .await
+                    .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e))?;
+                info!("TLS connected to {}", server_addr);
 
-            // Task 1: TUN→TLS (read from TUN, write to server)
-            let tun_read = tun.clone();
-            let send_task = tokio::spawn(async move {
-                tun_to_tls(tun_read, writer).await
-            });
+                let (reader, writer) = tokio::io::split(tls_stream);
+                let tun_c = tun.clone();
+                run_client_relay(tun_c, reader, writer).await
+            } else {
+                // Plain TCP mode
+                info!("TCP connected to {}", server_addr);
 
-            // Task 2: TLS→TUN (read from server, write to TUN)
-            let tun_write = tun.clone();
-            let recv_task = tokio::spawn(async move {
-                tls_to_tun(reader, tun_write).await
-            });
-
-            // Wait for either direction to finish
-            tokio::select! {
-                r = send_task => {
-                    if let Ok(Err(e)) = r {
-                        warn!("TUN→TLS relay stopped: {}", e);
-                    }
-                }
-                r = recv_task => {
-                    if let Ok(Err(e)) = r {
-                        warn!("TLS→TUN relay stopped: {}", e);
-                    }
-                }
+                let (reader, writer) = tokio::io::split(tcp);
+                let tun_c = tun.clone();
+                run_client_relay(tun_c, reader, writer).await
             }
-            Ok::<(), io::Error>(())
         }
         .await;
 
@@ -209,7 +186,75 @@ pub async fn run_tls_tun_client(
     }
 }
 
-/// Relay: read framed packets from TUN, write to TLS stream.
+/// Run bidirectional relay between TUN and a stream (TLS or TCP).
+async fn run_relay<R, W>(
+    tun: Arc<tun2::AsyncDevice>,
+    peer_addr: SocketAddr,
+    reader: R,
+    writer: W,
+) where
+    R: AsyncReadExt + Unpin + Send + 'static,
+    W: AsyncWriteExt + Unpin + Send + 'static,
+{
+    let tun_write = tun.clone();
+    let peer_ip = peer_addr.ip();
+    let read_task = tokio::spawn(async move {
+        if let Err(e) = tls_to_tun(reader, tun_write).await {
+            warn!("Client→TUN relay stopped for {}: {}", peer_ip, e);
+        }
+    });
+
+    let tun_read = tun.clone();
+    let peer_ip2 = peer_addr.ip();
+    let write_task = tokio::spawn(async move {
+        if let Err(e) = tun_to_tls(tun_read, writer).await {
+            warn!("TUN→Client relay stopped for {}: {}", peer_ip2, e);
+        }
+    });
+
+    tokio::select! {
+        _ = read_task => {}
+        _ = write_task => {}
+    }
+    info!("Relay ended for {}", peer_addr);
+}
+
+/// Run bidirectional relay for client side.
+async fn run_client_relay<R, W>(
+    tun: Arc<tun2::AsyncDevice>,
+    reader: R,
+    writer: W,
+) -> io::Result<()>
+where
+    R: AsyncReadExt + Unpin + Send + 'static,
+    W: AsyncWriteExt + Unpin + Send + 'static,
+{
+    let tun_read = tun.clone();
+    let send_task = tokio::spawn(async move {
+        tun_to_tls(tun_read, writer).await
+    });
+
+    let tun_write = tun.clone();
+    let recv_task = tokio::spawn(async move {
+        tls_to_tun(reader, tun_write).await
+    });
+
+    tokio::select! {
+        r = send_task => {
+            if let Ok(Err(e)) = r {
+                warn!("TUN→TLS relay stopped: {}", e);
+            }
+        }
+        r = recv_task => {
+            if let Ok(Err(e)) = r {
+                warn!("TLS→TUN relay stopped: {}", e);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Relay: read framed packets from TUN, write to stream.
 /// Sends keepalive heartbeats during idle periods to prevent NAT timeout.
 async fn tun_to_tls<W: AsyncWriteExt + Unpin>(
     tun: Arc<tun2::AsyncDevice>,
@@ -246,7 +291,7 @@ async fn tun_to_tls<W: AsyncWriteExt + Unpin>(
     }
 }
 
-/// Relay: read framed packets from TLS stream, write to TUN.
+/// Relay: read framed packets from stream, write to TUN.
 /// Handles keepalive frames (length=0) by silently discarding them.
 async fn tls_to_tun<R: AsyncReadExt + Unpin>(
     mut reader: R,

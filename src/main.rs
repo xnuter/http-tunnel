@@ -40,9 +40,10 @@ type DnsResolver = SimpleCachingDnsResolver;
 async fn main() -> io::Result<()> {
     init_logger();
 
-    let proxy_configuration = Arc::new(ProxyConfiguration::from_command_line().inspect_err(|_e| {
-        println!("Failed to process parameters. See ./log/application.log for details");
-    })?);
+    let proxy_configuration =
+        Arc::new(ProxyConfiguration::from_command_line().inspect_err(|_e| {
+            println!("Failed to process parameters. See ./log/application.log for details");
+        })?);
 
     info!("Starting listener on: {}", proxy_configuration.bind_address);
 
@@ -130,7 +131,10 @@ async fn serve_tls(
     }
 }
 
-async fn serve_plain_text(config: Arc<ProxyConfiguration>, dns_resolver: DnsResolver) -> io::Result<()> {
+async fn serve_plain_text(
+    config: Arc<ProxyConfiguration>,
+    dns_resolver: DnsResolver,
+) -> io::Result<()> {
     let listener = start_listening_tcp(&config).await?;
 
     loop {

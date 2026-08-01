@@ -1,11 +1,10 @@
-/// Copyright 2020 Developers of the http-tunnel project.
-///
-/// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-/// https://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-/// <LICENSE-MIT or https://opensource.org/licenses/MIT>, at your
-/// option. This file may not be copied, modified, or distributed
-/// except according to those terms.
-use std::fmt::Write;
+// Copyright 2020 Developers of the http-tunnel project.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// https://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or https://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
 
 use async_trait::async_trait;
 use bytes::BytesMut;
@@ -89,33 +88,28 @@ impl Encoder<EstablishTunnelResult> for HttpTunnelCodec {
         item: EstablishTunnelResult,
         dst: &mut BytesMut,
     ) -> Result<(), Self::Error> {
-        let (code, message) = match item {
-            EstablishTunnelResult::Ok => (200, "OK"),
-            EstablishTunnelResult::OkWithNugget => {
-                // do nothing, the upstream should respond instead
-                return Ok(());
-            }
-            EstablishTunnelResult::BadRequest => (400, "BAD_REQUEST"),
-            EstablishTunnelResult::Forbidden => (403, "FORBIDDEN"),
-            EstablishTunnelResult::OperationNotAllowed => (405, "NOT_ALLOWED"),
-            EstablishTunnelResult::RequestTimeout => (408, "TIMEOUT"),
-            EstablishTunnelResult::TooManyRequests => (429, "TOO_MANY_REQUESTS"),
-            EstablishTunnelResult::ServerError => (500, "SERVER_ERROR"),
-            EstablishTunnelResult::BadGateway => (502, "BAD_GATEWAY"),
-            EstablishTunnelResult::GatewayTimeout => (504, "GATEWAY_TIMEOUT"),
+        let bytes: &[u8] = match item {
+            EstablishTunnelResult::Ok => b"HTTP/1.1 200 OK\r\n\r\n",
+            EstablishTunnelResult::OkWithNugget => return Ok(()),
+            EstablishTunnelResult::BadRequest => b"HTTP/1.1 400 BAD_REQUEST\r\n\r\n",
+            EstablishTunnelResult::Forbidden => b"HTTP/1.1 403 FORBIDDEN\r\n\r\n",
+            EstablishTunnelResult::OperationNotAllowed => b"HTTP/1.1 405 NOT_ALLOWED\r\n\r\n",
+            EstablishTunnelResult::RequestTimeout => b"HTTP/1.1 408 TIMEOUT\r\n\r\n",
+            EstablishTunnelResult::TooManyRequests => b"HTTP/1.1 429 TOO_MANY_REQUESTS\r\n\r\n",
+            EstablishTunnelResult::ServerError => b"HTTP/1.1 500 SERVER_ERROR\r\n\r\n",
+            EstablishTunnelResult::BadGateway => b"HTTP/1.1 502 BAD_GATEWAY\r\n\r\n",
+            EstablishTunnelResult::GatewayTimeout => b"HTTP/1.1 504 GATEWAY_TIMEOUT\r\n\r\n",
         };
 
-        dst.write_fmt(format_args!("HTTP/1.1 {} {}\r\n\r\n", code as u32, message))
-            .map_err(|_| std::io::Error::from(std::io::ErrorKind::Other))
+        dst.extend_from_slice(bytes);
+        Ok(())
     }
 }
 
 #[async_trait]
 impl TunnelTarget for HttpTunnelTarget {
-    type Addr = String;
-
-    fn target_addr(&self) -> Self::Addr {
-        self.target.clone()
+    fn target_addr(&self) -> &str {
+        &self.target
     }
 
     fn has_nugget(&self) -> bool {
@@ -167,7 +161,7 @@ impl HttpConnectRequest {
         HttpConnectRequest::precondition_legal_characters(http_request)?;
 
         let http_request_as_string =
-            String::from_utf8(http_request.to_vec()).expect("Contains only ASCII");
+            std::str::from_utf8(http_request).expect("Contains only ASCII");
 
         let mut lines = http_request_as_string.split("\r\n");
 
@@ -216,29 +210,30 @@ impl HttpConnectRequest {
     fn parse_request_line(
         request_line: &str,
     ) -> Result<(&str, &str, &str, bool), EstablishTunnelResult> {
-        let request_line_items = request_line.split(' ').collect::<Vec<&str>>();
-        HttpConnectRequest::precondition_well_formed(request_line, &request_line_items)?;
+        let mut request_line_items = request_line.split(' ');
 
-        let method = request_line_items[0];
-        let uri = request_line_items[1];
-        let version = request_line_items[2];
+        let method = request_line_items.next().ok_or_else(|| {
+            debug!("Bad request line: `{:?}`", request_line);
+            EstablishTunnelResult::BadRequest
+        })?;
+        let uri = request_line_items.next().ok_or_else(|| {
+            debug!("Bad request line: `{:?}`", request_line);
+            EstablishTunnelResult::BadRequest
+        })?;
+        let version = request_line_items.next().ok_or_else(|| {
+            debug!("Bad request line: `{:?}`", request_line);
+            EstablishTunnelResult::BadRequest
+        })?;
+
+        if request_line_items.next().is_some() {
+            debug!("Bad request line: `{:?}`", request_line);
+            return Err(EstablishTunnelResult::BadRequest);
+        }
 
         let has_nugget = HttpConnectRequest::check_method(method)?;
         HttpConnectRequest::check_version(version)?;
 
         Ok((method, uri, version, has_nugget))
-    }
-
-    fn precondition_well_formed(
-        request_line: &str,
-        request_line_items: &[&str],
-    ) -> Result<(), EstablishTunnelResult> {
-        if request_line_items.len() != 3 {
-            debug!("Bad request line: `{:?}`", request_line,);
-            Err(EstablishTunnelResult::BadRequest)
-        } else {
-            Ok(())
-        }
     }
 
     fn check_version(version: &str) -> Result<(), EstablishTunnelResult> {

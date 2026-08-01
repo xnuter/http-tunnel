@@ -70,8 +70,7 @@ pub struct ConnectionTunnel<H, C, T> {
 
 #[async_trait]
 pub trait TunnelTarget {
-    type Addr;
-    fn target_addr(&self) -> Self::Addr;
+    fn target_addr(&self) -> &str;
     fn has_nugget(&self) -> bool;
     fn nugget(&self) -> &Nugget;
 }
@@ -799,7 +798,7 @@ mod test {
         type Stream = Mock;
 
         async fn connect(&mut self, target: &Self::Target) -> io::Result<Self::Stream> {
-            let target_addr = &target.target_addr();
+            let target_addr = target.target_addr();
             assert_eq!(&self.target, target_addr);
 
             if let Some(d) = self.delay {

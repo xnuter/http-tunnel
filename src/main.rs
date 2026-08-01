@@ -23,6 +23,7 @@ use log4rs::append::console::ConsoleAppender;
 use log4rs::config::{Appender, Root};
 use log4rs::Config;
 use std::io::{Error, ErrorKind};
+use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 mod configuration;
@@ -39,9 +40,9 @@ type DnsResolver = SimpleCachingDnsResolver;
 async fn main() -> io::Result<()> {
     init_logger();
 
-    let proxy_configuration = ProxyConfiguration::from_command_line().inspect_err(|_e| {
+    let proxy_configuration = Arc::new(ProxyConfiguration::from_command_line().inspect_err(|_e| {
         println!("Failed to process parameters. See ./log/application.log for details");
-    })?;
+    })?);
 
     info!("Starting listener on: {}", proxy_configuration.bind_address);
 
@@ -96,7 +97,7 @@ async fn start_listening_tcp(config: &ProxyConfiguration) -> Result<TcpListener,
 }
 
 async fn serve_tls(
-    config: ProxyConfiguration,
+    config: Arc<ProxyConfiguration>,
     tls_acceptor: TlsAcceptor,
     dns_resolver: DnsResolver,
 ) -> io::Result<()> {
@@ -112,7 +113,7 @@ async fn serve_tls(
             Ok((stream, _)) => {
                 stream.nodelay().unwrap_or_default();
                 let stream_tls_acceptor = tls_acceptor.clone();
-                let config = config.clone();
+                let config = Arc::clone(&config);
                 // handle accepted connections asynchronously
                 tokio::spawn(async move {
                     handle_client_tls_connection(
@@ -129,7 +130,7 @@ async fn serve_tls(
     }
 }
 
-async fn serve_plain_text(config: ProxyConfiguration, dns_resolver: DnsResolver) -> io::Result<()> {
+async fn serve_plain_text(config: Arc<ProxyConfiguration>, dns_resolver: DnsResolver) -> io::Result<()> {
     let listener = start_listening_tcp(&config).await?;
 
     loop {
@@ -141,7 +142,7 @@ async fn serve_plain_text(config: ProxyConfiguration, dns_resolver: DnsResolver)
         match socket {
             Ok((stream, _)) => {
                 stream.nodelay().unwrap_or_default();
-                let config = config.clone();
+                let config = Arc::clone(&config);
                 // handle accepted connections asynchronously
                 tokio::spawn(async move { tunnel_stream(&config, stream, dns_resolver_ref).await });
             }
@@ -151,7 +152,7 @@ async fn serve_plain_text(config: ProxyConfiguration, dns_resolver: DnsResolver)
 }
 
 async fn serve_tcp(
-    config: ProxyConfiguration,
+    config: Arc<ProxyConfiguration>,
     dns_resolver: DnsResolver,
     destination: String,
 ) -> io::Result<()> {
@@ -163,11 +164,10 @@ async fn serve_tcp(
 
         let dns_resolver_ref = dns_resolver.clone();
         let destination_copy = destination.clone();
-        let config_copy = config.clone();
 
         match socket {
             Ok((stream, _)) => {
-                let config = config.clone();
+                let config = Arc::clone(&config);
                 stream.nodelay().unwrap_or_default();
                 // handle accepted connections asynchronously
                 tokio::spawn(async move {
@@ -195,8 +195,8 @@ async fn serve_tcp(
                                 stream,
                                 destination,
                                 ctx,
-                                config_copy.tunnel_config.client_connection.relay_policy,
-                                config_copy.tunnel_config.target_connection.relay_policy,
+                                config.tunnel_config.client_connection.relay_policy.clone(),
+                                config.tunnel_config.target_connection.relay_policy.clone(),
                             )
                             .await;
 
@@ -212,7 +212,7 @@ async fn serve_tcp(
 }
 
 async fn handle_client_tls_connection(
-    config: ProxyConfiguration,
+    config: Arc<ProxyConfiguration>,
     tls_acceptor: TlsAcceptor,
     stream: TcpStream,
     dns_resolver: DnsResolver,
@@ -291,7 +291,7 @@ async fn tunnel_stream<C: AsyncRead + AsyncWrite + Send + Unpin + 'static>(
 /// Each bidirectional stream is treated as an independent tunnel session.
 #[cfg(feature = "quic")]
 async fn serve_quic(
-    config: ProxyConfiguration,
+    config: Arc<ProxyConfiguration>,
     quic_tls: configuration::QuicTlsConfig,
     dns_resolver: DnsResolver,
 ) -> io::Result<()> {
@@ -312,7 +312,7 @@ async fn serve_quic(
     info!("QUIC endpoint listening on: {}", bind_addr);
 
     while let Some(incoming) = endpoint.accept().await {
-        let config = config.clone();
+        let config = Arc::clone(&config);
         let dns_resolver = dns_resolver.clone();
 
         tokio::spawn(async move {
@@ -338,7 +338,7 @@ async fn serve_quic(
 /// Each stream is tunneled independently via `tunnel_stream`.
 #[cfg(feature = "quic")]
 async fn handle_quic_connection(
-    config: ProxyConfiguration,
+    config: Arc<ProxyConfiguration>,
     connection: quinn::Connection,
     dns_resolver: DnsResolver,
 ) {
@@ -346,7 +346,7 @@ async fn handle_quic_connection(
         match connection.accept_bi().await {
             Ok((send, recv)) => {
                 let stream = quic::QuicBiStream::new(send, recv);
-                let config = config.clone();
+                let config = Arc::clone(&config);
                 let dns_resolver = dns_resolver.clone();
                 tokio::spawn(async move {
                     if let Err(e) = tunnel_stream(&config, stream, dns_resolver).await {

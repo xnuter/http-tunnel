@@ -68,14 +68,14 @@ pub struct SimpleCachingDnsResolver {
 #[async_trait]
 impl<D, R> TargetConnector for SimpleTcpConnector<D, R>
 where
-    D: TunnelTarget<Addr = String> + Send + Sync + Sized,
+    D: TunnelTarget + Send + Sync + Sized,
     R: DnsResolver + Send + Sync + 'static,
 {
     type Target = D;
     type Stream = TcpStream;
 
     async fn connect(&mut self, target: &Self::Target) -> io::Result<Self::Stream> {
-        let target_addr = &target.target_addr();
+        let target_addr = target.target_addr();
 
         let addr = self.dns_resolver.resolve(target_addr).await?;
 
